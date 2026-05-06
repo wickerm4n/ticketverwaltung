@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.06.2";
+  const APP_VERSION = "2026.05.06.4";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -23,6 +23,9 @@
     normal: "Normal",
     vip: "VIP",
   });
+
+  const TOAST_TYPES = new Set(["info", "success", "warning", "danger"]);
+  const TOAST_DURATION_MS = 4200;
 
   const state = {
     tickets: [],
@@ -61,6 +64,7 @@
     resetBtn: document.querySelector("#resetBtn"),
     limitBadge: document.querySelector("#limitBadge"),
     toast: document.querySelector("#toast"),
+    toastMessage: document.querySelector("#toastMessage"),
     dialogBackdrop: document.querySelector("#dialogBackdrop"),
     dialogCard: document.querySelector(".modal-card"),
     dialogTitle: document.querySelector("#dialogTitle"),
@@ -294,7 +298,7 @@
 
     clearForm();
     renderApp();
-    showToast("Ticket gespeichert.");
+    showToast("Ticket gespeichert.", "success");
   }
 
   function editTicket(id, data) {
@@ -320,7 +324,7 @@
 
     clearForm();
     renderApp();
-    showToast("Eintrag aktualisiert.");
+    showToast("Eintrag aktualisiert.", "success");
   }
 
   async function deleteTicket(id) {
@@ -347,7 +351,7 @@
     if (!saveData()) return;
 
     renderApp();
-    showToast("Ticket gelöscht.");
+    showToast("Ticket gelöscht.", "success");
   }
 
   function startEditTicket(id) {
@@ -587,7 +591,7 @@
 
   function exportCsv() {
     if (state.tickets.length === 0) {
-      showToast("Keine Daten für Export.");
+      showToast("Keine Daten für Export.", "warning");
       return;
     }
 
@@ -615,7 +619,7 @@
     link.remove();
     URL.revokeObjectURL(url);
 
-    showToast("CSV exportiert.");
+    showToast("CSV exportiert.", "success");
   }
 
   // Verhindert CSV-/Spreadsheet-Formel-Injektion beim Öffnen in Tabellenprogrammen.
@@ -627,7 +631,7 @@
 
   async function resetAllData() {
     if (state.tickets.length === 0) {
-      showToast("Keine Daten vorhanden.");
+      showToast("Keine Daten vorhanden.", "info");
       return;
     }
 
@@ -647,7 +651,7 @@
     clearForm();
     saveData();
     renderApp();
-    showToast("Daten zurückgesetzt.");
+    showToast("Daten zurückgesetzt.", "success");
   }
 
   function openDialog({
@@ -752,7 +756,7 @@
       return true;
     }
 
-    showToast("Speichern fehlgeschlagen.");
+    showToast("Speichern fehlgeschlagen.", "danger");
     return false;
   }
 
@@ -995,14 +999,26 @@
     els.formError.textContent = message;
   }
 
-  function showToast(message) {
-    els.toast.textContent = String(message).slice(0, 120);
-    els.toast.classList.add("show");
+  function showToast(message, type = "info") {
+    if (!els.toast) return;
+
+    const safeType = TOAST_TYPES.has(type) ? type : "info";
+    const safeMessage = String(message ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 120);
+    const target = els.toastMessage || els.toast;
 
     window.clearTimeout(showToast.timer);
+    els.toast.classList.remove("show", "toast-info", "toast-success", "toast-warning", "toast-danger");
+
+    // Reflow erzwingen, damit schnelle Folgemeldungen die Animation neu starten.
+    void els.toast.offsetWidth;
+
+    target.textContent = safeMessage || "Hinweis";
+    els.toast.dataset.position = els.toast.dataset.position || "top-right";
+    els.toast.classList.add(`toast-${safeType}`, "show");
+
     showToast.timer = window.setTimeout(() => {
       els.toast.classList.remove("show");
-    }, 2400);
+    }, TOAST_DURATION_MS);
   }
 
   init();
