@@ -11,7 +11,7 @@
 
   const PRICES = Object.freeze({
     normal: 2500,
-    vip: 5000,
+    vip: 4000,
   });
 
   const TYPE_LABELS = Object.freeze({
