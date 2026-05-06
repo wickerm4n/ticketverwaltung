@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.06.4";
+  const APP_VERSION = "2026.05.06.10";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -13,6 +13,9 @@
   const MAX_NAME_LENGTH = 40;
   const MAX_PHONE_LENGTH = 20;
   const MAX_SEARCH_LENGTH = 80;
+  const MAX_STORAGE_LENGTH = 250_000;
+  const MAX_VERSION_LENGTH = 64;
+  const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
 
   const PRICES = Object.freeze({
     normal: 2500,
@@ -85,8 +88,8 @@
 
 
   function checkAppVersionAndMaybeReload() {
-    const storedVersion = safeStorageGet(localStorage, VERSION_STORAGE_KEY);
-    const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY);
+    const storedVersion = safeStorageGet(localStorage, VERSION_STORAGE_KEY, MAX_VERSION_LENGTH);
+    const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
     const urlVersion = getUrlVersionParam();
 
     if (storedVersion === APP_VERSION) {
@@ -107,8 +110,13 @@
   function reloadWithVersionParam() {
     try {
       const targetUrl = new URL(window.location.href);
+      if (!isReloadableAppUrl(targetUrl)) {
+        window.location.reload();
+        return;
+      }
+
       targetUrl.searchParams.set(VERSION_URL_PARAM, APP_VERSION);
-      window.location.replace(targetUrl.toString());
+      window.location.replace(targetUrl.href);
     } catch {
       window.location.reload();
     }
@@ -116,27 +124,36 @@
 
   function getUrlVersionParam() {
     try {
-      return new URL(window.location.href).searchParams.get(VERSION_URL_PARAM) || "";
+      const version = new URL(window.location.href).searchParams.get(VERSION_URL_PARAM) || "";
+      return /^[\w.-]{1,64}$/.test(version) ? version : "";
     } catch {
       return "";
     }
+  }
+
+  function isReloadableAppUrl(url) {
+    if (url.protocol === "file:") return true;
+    return ["http:", "https:"].includes(url.protocol) && url.origin === window.location.origin;
   }
 
   function clearVersionReloadGuard() {
     safeStorageRemove(sessionStorage, VERSION_RELOAD_GUARD_KEY);
   }
 
-  function safeStorageGet(storage, key) {
+  function safeStorageGet(storage, key, maxLength = MAX_STORAGE_LENGTH) {
     try {
-      return storage.getItem(key) || "";
+      const value = storage.getItem(key);
+      return typeof value === "string" && value.length <= maxLength ? value : "";
     } catch {
       return "";
     }
   }
 
-  function safeStorageSet(storage, key, value) {
+  function safeStorageSet(storage, key, value, maxLength = MAX_STORAGE_LENGTH) {
     try {
-      storage.setItem(key, String(value));
+      const text = String(value);
+      if (text.length > maxLength) return false;
+      storage.setItem(key, text);
       return true;
     } catch {
       return false;
@@ -828,7 +845,7 @@
     const price = parseSafeInteger(ticket.price) || defaultPrice;
 
     return {
-      id: String(ticket.id || createId()).slice(0, 80),
+      id: normalizeStoredId(ticket.id),
       ticketNumber: normalizeTicketNumber(ticket.ticketNumber, type) || generateTicketNumber(type),
       firstName: normalizeStoredText(ticket.firstName, MAX_NAME_LENGTH),
       lastName: normalizeStoredText(ticket.lastName, MAX_NAME_LENGTH),
@@ -883,7 +900,7 @@
   }
 
   function getUniqueId(value, usedIds) {
-    let id = String(value || "").trim().slice(0, 80);
+    let id = normalizeStoredId(value);
 
     if (!id || usedIds.has(id)) {
       do {
@@ -922,6 +939,11 @@
       normal: Math.max(1, parseSafeInteger(counters?.normal) || 1),
       vip: Math.max(1, parseSafeInteger(counters?.vip) || 1),
     };
+  }
+
+  function normalizeStoredId(value) {
+    const id = String(value ?? "").trim();
+    return SAFE_ID_PATTERN.test(id) ? id : createId();
   }
 
   function sanitizeDigits(value) {
