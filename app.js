@@ -1,6 +1,11 @@
 (() => {
   "use strict";
 
+  const APP_VERSION = "2026.05.06.2";
+  const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
+  const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
+  const VERSION_URL_PARAM = "_appv";
+
   const STORAGE_KEY = "eventTicketManagerData.v3";
   const LEGACY_STORAGE_KEYS = ["eventTicketManagerData.v2", "eventTicketManagerData.v1"];
   const MAX_TICKETS = 250;
@@ -65,10 +70,81 @@
   };
 
   function init() {
+    if (checkAppVersionAndMaybeReload()) return;
+
     loadData();
     bindEvents();
     updatePriceUi();
     renderApp();
+    clearVersionReloadGuard();
+  }
+
+
+  function checkAppVersionAndMaybeReload() {
+    const storedVersion = safeStorageGet(localStorage, VERSION_STORAGE_KEY);
+    const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY);
+    const urlVersion = getUrlVersionParam();
+
+    if (storedVersion === APP_VERSION) {
+      return false;
+    }
+
+    safeStorageSet(localStorage, VERSION_STORAGE_KEY, APP_VERSION);
+
+    if (guardedVersion === APP_VERSION || urlVersion === APP_VERSION) {
+      return false;
+    }
+
+    safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, APP_VERSION);
+    reloadWithVersionParam();
+    return true;
+  }
+
+  function reloadWithVersionParam() {
+    try {
+      const targetUrl = new URL(window.location.href);
+      targetUrl.searchParams.set(VERSION_URL_PARAM, APP_VERSION);
+      window.location.replace(targetUrl.toString());
+    } catch {
+      window.location.reload();
+    }
+  }
+
+  function getUrlVersionParam() {
+    try {
+      return new URL(window.location.href).searchParams.get(VERSION_URL_PARAM) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function clearVersionReloadGuard() {
+    safeStorageRemove(sessionStorage, VERSION_RELOAD_GUARD_KEY);
+  }
+
+  function safeStorageGet(storage, key) {
+    try {
+      return storage.getItem(key) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function safeStorageSet(storage, key, value) {
+    try {
+      storage.setItem(key, String(value));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function safeStorageRemove(storage, key) {
+    try {
+      storage.removeItem(key);
+    } catch {
+      // Storage kann z. B. im privaten Modus blockiert sein.
+    }
   }
 
   function bindEvents() {
@@ -672,13 +748,12 @@
       counters: sanitizeCounters(state.counters),
     };
 
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if (safeStorageSet(localStorage, STORAGE_KEY, JSON.stringify(data))) {
       return true;
-    } catch {
-      showToast("Speichern fehlgeschlagen.");
-      return false;
     }
+
+    showToast("Speichern fehlgeschlagen.");
+    return false;
   }
 
   function loadData() {
@@ -708,11 +783,11 @@
   }
 
   function getStoredData() {
-    const current = localStorage.getItem(STORAGE_KEY);
+    const current = safeStorageGet(localStorage, STORAGE_KEY);
     if (current) return current;
 
     for (const key of LEGACY_STORAGE_KEYS) {
-      const value = localStorage.getItem(key);
+      const value = safeStorageGet(localStorage, key);
       if (value) return value;
     }
 
