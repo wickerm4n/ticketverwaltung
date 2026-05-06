@@ -58,7 +58,6 @@
     toast: document.querySelector("#toast"),
     dialogBackdrop: document.querySelector("#dialogBackdrop"),
     dialogCard: document.querySelector(".modal-card"),
-    dialogIcon: document.querySelector("#dialogIcon"),
     dialogTitle: document.querySelector("#dialogTitle"),
     dialogMessage: document.querySelector("#dialogMessage"),
     dialogCancelBtn: document.querySelector("#dialogCancelBtn"),
@@ -590,9 +589,6 @@
     els.dialogConfirmBtn.textContent = String(confirmText).slice(0, 30);
     els.dialogCancelBtn.textContent = String(cancelText).slice(0, 30);
     els.dialogCancelBtn.hidden = !showCancel;
-    els.dialogIcon.textContent = variant === "danger" ? "×" : "!";
-    els.dialogIcon.classList.toggle("danger", variant === "danger");
-
     els.dialogConfirmBtn.className = variant === "danger"
       ? "btn btn-danger-filled"
       : "btn btn-primary";

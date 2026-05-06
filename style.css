@@ -548,22 +548,6 @@ tbody tr:last-child td {
   opacity: 1;
 }
 
-.modal-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 16px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 14px;
-  background: linear-gradient(135deg, rgba(255, 140, 198, 0.28), rgba(185, 156, 255, 0.22));
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  font-weight: 950;
-}
-
-.modal-icon.danger {
-  background: linear-gradient(135deg, rgba(255, 111, 131, 0.36), rgba(255, 72, 99, 0.2));
-}
 
 .modal-card h2 {
   font-size: 1.28rem;
