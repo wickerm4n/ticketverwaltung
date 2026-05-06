@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <title>Ticketverwaltung</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="hero panel">
+      <div>
+        <p class="eyebrow">Event</p>
+        <h1>Ticketverwaltung</h1>
+      </div>
+      <div class="hero-actions">
+        <button class="btn btn-soft" id="exportCsvBtn" type="button">CSV exportieren</button>
+        <button class="btn btn-danger" id="resetBtn" type="button">Zurücksetzen</button>
+      </div>
+    </header>
+
+    <section class="stats-grid" aria-label="Statistik">
+      <article class="stat-card panel">
+        <span>Verkauft</span>
+        <strong id="soldCount">0</strong>
+      </article>
+      <article class="stat-card panel">
+        <span>Normal</span>
+        <strong id="normalCount">0</strong>
+      </article>
+      <article class="stat-card panel">
+        <span>VIP</span>
+        <strong id="vipCount">0</strong>
+      </article>
+      <article class="stat-card panel">
+        <span>Verfügbar</span>
+        <strong id="remainingCount">250</strong>
+      </article>
+      <article class="stat-card panel stat-wide">
+        <span>Einnahmen</span>
+        <strong id="totalRevenue">0 $</strong>
+      </article>
+    </section>
+
+    <section class="grid-layout">
+      <form class="panel form-card" id="ticketForm" novalidate autocomplete="off">
+        <div class="section-title">
+          <h2 id="formTitle">Ticket hinzufügen</h2>
+          <span id="formModeBadge">Neu</span>
+        </div>
+
+        <input id="editId" type="hidden">
+
+        <label class="field">
+          <span>Vorname</span>
+          <input id="firstName" type="text" autocomplete="given-name" placeholder="Vorname" maxlength="40" spellcheck="false">
+        </label>
+
+        <label class="field">
+          <span>Nachname</span>
+          <input id="lastName" type="text" autocomplete="family-name" placeholder="Nachname" maxlength="40" spellcheck="false">
+        </label>
+
+        <label class="field">
+          <span>Telefonnummer</span>
+          <input id="phone" type="tel" inputmode="numeric" pattern="[0-9]*" autocomplete="tel" placeholder="Telefonnummer" maxlength="20">
+        </label>
+
+        <label class="field">
+          <span>Tickettyp</span>
+          <select id="ticketType">
+            <option value="normal">Normal</option>
+            <option value="vip">VIP</option>
+          </select>
+        </label>
+
+        <label class="check-row">
+          <input id="customPriceToggle" type="checkbox">
+          <span class="check-visual" aria-hidden="true"></span>
+          <span>Preis anpassen</span>
+        </label>
+
+        <label class="field price-field hidden" id="customPriceField">
+          <span>Preis</span>
+          <input id="customPrice" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Preis" maxlength="9">
+        </label>
+
+        <div class="form-actions">
+          <button class="btn btn-primary" id="saveBtn" type="submit">Speichern</button>
+          <button class="btn btn-soft hidden" id="cancelEditBtn" type="button">Abbrechen</button>
+        </div>
+
+        <p class="form-error" id="formError" aria-live="polite"></p>
+      </form>
+
+      <section class="panel table-card">
+        <div class="section-title table-title-row">
+          <h2>Tickets</h2>
+          <span id="limitBadge">250 Plätze</span>
+        </div>
+
+        <div class="toolbar">
+          <label class="search-box">
+            <span class="sr-only">Suche</span>
+            <input id="searchInput" type="search" placeholder="Suchen" maxlength="80" spellcheck="false">
+          </label>
+
+          <label class="filter-box">
+            <span class="sr-only">Filter</span>
+            <select id="typeFilter">
+              <option value="all">Alle</option>
+              <option value="normal">Normal</option>
+              <option value="vip">VIP</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticketnummer</th>
+                <th>Vorname</th>
+                <th>Nachname</th>
+                <th>Telefonnummer</th>
+                <th>Tickettyp</th>
+                <th>Preis</th>
+                <th>Aktionen</th>
+              </tr>
+            </thead>
+            <tbody id="ticketTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <div class="modal-backdrop" id="dialogBackdrop" hidden>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dialogTitle" aria-describedby="dialogMessage" tabindex="-1">
+      <div class="modal-icon" id="dialogIcon" aria-hidden="true">!</div>
+      <h2 id="dialogTitle">Hinweis</h2>
+      <p id="dialogMessage">Aktion bestätigen.</p>
+      <div class="modal-actions">
+        <button class="btn btn-soft" id="dialogCancelBtn" type="button">Abbrechen</button>
+        <button class="btn btn-primary" id="dialogConfirmBtn" type="button">OK</button>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
