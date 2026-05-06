@@ -140,7 +140,9 @@ select:focus-visible,
 .action-btn:focus-visible,
 .modal-card:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 4px rgba(255, 140, 198, 0.14);
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.68),
+    0 0 0 4px rgba(19, 165, 111, 0.16);
 }
 
 .btn:disabled {
@@ -300,8 +302,11 @@ input::placeholder {
 
 input:focus,
 select:focus {
-  border-color: rgba(255, 140, 198, 0.76);
+  border-color: rgba(19, 165, 111, 0.82);
   background: rgba(255, 255, 255, 0.095);
+  box-shadow:
+    0 0 0 1px rgba(139, 92, 246, 0.72),
+    0 0 0 4px rgba(19, 165, 111, 0.18);
 }
 
 input:disabled {
@@ -354,8 +359,8 @@ input:disabled {
 }
 
 .check-row input:checked + .check-visual {
-  border-color: rgba(255, 140, 198, 0.9);
-  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-color: rgba(19, 165, 111, 0.9);
+  background: linear-gradient(135deg, #8b5cf6 0%, #13a56f 100%);
 }
 
 .check-row input:checked + .check-visual::after {
