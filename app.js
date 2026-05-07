@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.09";
+  const APP_VERSION = "2026.05.07.10";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -1081,8 +1081,10 @@
       state.dialogResolve = resolve;
       state.dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       state.dialogPreferenceKey = canRememberDialog ? preferenceKey : "";
+      els.dialogBackdrop.classList.remove("open");
       els.dialogBackdrop.hidden = false;
       document.body.classList.add("modal-open");
+      void els.dialogBackdrop.offsetWidth;
 
       requestAnimationFrame(() => {
         els.dialogBackdrop.classList.add("open");
