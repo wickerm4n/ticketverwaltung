@@ -6,14 +6,14 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.05.07.22">
+  <meta name="app-version" content="2026.05.07.24">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="icon.svg?v=2026.05.07.22" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=2026.05.07.22">
-  <script src="app.js?v=2026.05.07.22" defer></script>
+  <link rel="icon" href="icon.svg?v=2026.05.07.24" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=2026.05.07.24">
+  <script src="app.js?v=2026.05.07.24" defer></script>
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -178,7 +178,16 @@
 
         <div class="selection-bar" id="selectionBar" hidden>
           <span id="selectionCount">0 Tickets ausgewählt</span>
-          <button class="btn btn-danger" id="bulkDeleteBtn" type="button">Ausgewählte Tickets löschen</button>
+          <div class="selection-actions" role="toolbar" aria-label="Aktionen für ausgewählte Tickets">
+            <button class="btn btn-soft header-icon-btn selection-icon-btn icon-action" id="bulkExportCsvBtn" type="button" data-tooltip="Ausgewählte Tickets als CSV-Datei exportieren" aria-label="Ausgewählte Tickets als CSV-Datei exportieren">
+              <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-csv-export"></use></svg>
+              <span class="sr-only">Ausgewählte Tickets als CSV-Datei exportieren</span>
+            </button>
+            <button class="btn btn-danger header-icon-btn selection-icon-btn icon-action" id="bulkDeleteBtn" type="button" data-tooltip="Ausgewählte Tickets löschen" aria-label="Ausgewählte Tickets löschen">
+              <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-delete-list"></use></svg>
+              <span class="sr-only">Ausgewählte Tickets löschen</span>
+            </button>
+          </div>
         </div>
 
         <div class="table-wrap">

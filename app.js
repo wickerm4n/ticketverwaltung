@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.22";
+  const APP_VERSION = "2026.05.07.24";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
@@ -87,6 +87,7 @@
     selectAllTickets: document.querySelector("#selectAllTickets"),
     selectionBar: document.querySelector("#selectionBar"),
     selectionCount: document.querySelector("#selectionCount"),
+    bulkExportCsvBtn: document.querySelector("#bulkExportCsvBtn"),
     bulkDeleteBtn: document.querySelector("#bulkDeleteBtn"),
     resetConfirmationsBtn: document.querySelector("#resetConfirmationsBtn"),
     tableBody: document.querySelector("#ticketTableBody"),
@@ -364,6 +365,7 @@
     els.tableBody.addEventListener("click", handleTableAction);
     els.tableBody.addEventListener("change", handleTableSelectionChange);
     els.selectAllTickets.addEventListener("change", handleSelectAllTickets);
+    els.bulkExportCsvBtn.addEventListener("click", exportSelectedCsv);
     els.bulkDeleteBtn.addEventListener("click", deleteSelectedTickets);
     els.resetConfirmationsBtn.addEventListener("click", resetHiddenConfirmations);
     els.exportCsvBtn.addEventListener("click", exportCsv);
@@ -542,6 +544,23 @@
     } else {
       showToast("Ticket nicht mehr vorhanden.", "warning");
     }
+  }
+
+  function exportSelectedCsv() {
+    const selectedTickets = getSelectedTickets();
+
+    if (selectedTickets.length === 0) {
+      clearSelectedTickets();
+      renderApp();
+      showToast("Keine Tickets ausgewählt.", "warning");
+      return;
+    }
+
+    exportTicketsAsCsv(selectedTickets, {
+      filePrefix: "ausgewaehlte-tickets",
+      successMessage: `${formatTicketCount(selectedTickets.length)} als CSV-Datei exportiert.`,
+      emptyMessage: "Keine Tickets ausgewählt.",
+    });
   }
 
   async function deleteSelectedTickets() {
@@ -901,6 +920,7 @@
 
     const selectedCount = state.selectedTicketIds.size;
     els.selectionBar.hidden = selectedCount === 0;
+    els.bulkExportCsvBtn.disabled = selectedCount === 0;
     els.bulkDeleteBtn.disabled = selectedCount === 0;
     els.selectionCount.textContent = selectedCount === 1
       ? "1 Ticket ausgewählt"
@@ -1040,14 +1060,29 @@
   }
 
   function exportCsv() {
-    if (state.tickets.length === 0) {
-      showToast("Keine Daten für Export.", "warning");
-      return;
+    exportTicketsAsCsv(state.tickets, {
+      filePrefix: "tickets",
+      successMessage: "CSV-Datei exportiert.",
+      emptyMessage: "Keine Daten für Export.",
+    });
+  }
+
+  function exportTicketsAsCsv(tickets, { filePrefix, successMessage, emptyMessage }) {
+    if (!Array.isArray(tickets) || tickets.length === 0) {
+      showToast(emptyMessage || "Keine Daten für Export.", "warning");
+      return false;
     }
 
+    const csv = createTicketsCsv(tickets);
+    downloadCsv(csv, `${filePrefix || "tickets"}-${new Date().toISOString().slice(0, 10)}.csv`);
+    showToast(successMessage || "CSV-Datei exportiert.", "success");
+    return true;
+  }
+
+  function createTicketsCsv(tickets) {
     const rows = [
       ["Ticketnummer", "Vorname", "Nachname", "Telefonnummer", "Tickettyp", "Menü", "Preis"],
-      ...state.tickets.map((ticket) => [
+      ...tickets.map((ticket) => [
         ticket.ticketNumber,
         ticket.firstName,
         ticket.lastName,
@@ -1058,19 +1093,20 @@
       ]),
     ];
 
-    const csv = rows.map((row) => row.map(toCsvCell).join(";")).join("\r\n");
+    return rows.map((row) => row.map(toCsvCell).join(";")).join("\r\n");
+  }
+
+  function downloadCsv(csv, filename) {
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
 
     link.href = url;
-    link.download = `tickets-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = filename;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-
-    showToast("CSV exportiert.", "success");
   }
 
   function openCsvImportPicker() {
@@ -1399,7 +1435,7 @@
 
   function parseImportedMenu(value) {
     const text = normalizeCsvHeader(unescapeImportedCsvCell(value));
-    if (["menu 2", "menue 2", "menü 2", "menu2", "menue2", "menü2", "Veggie", "vegetarisch", "vegetarian"].includes(text)) {
+    if (["menu 2", "menue 2", "menü 2", "menu2", "menue2", "menü2", "veggie", "vegetarisch", "vegetarian"].includes(text)) {
       return "menu2";
     }
     if (["menu 1", "menue 1", "menü 1", "menu1", "menue1", "menü1"].includes(text)) {
