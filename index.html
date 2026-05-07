@@ -6,27 +6,68 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.05.07.14">
+  <meta name="app-version" content="2026.05.07.18">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="icon.svg?v=2026.05.07.14" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=2026.05.07.14">
-  <script src="app.js?v=2026.05.07.14" defer></script>
+  <link rel="icon" href="icon.svg?v=2026.05.07.18" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=2026.05.07.18">
+  <script src="app.js?v=2026.05.07.18" defer></script>
 </head>
 <body>
+  <svg class="svg-sprite" aria-hidden="true" focusable="false">
+    <symbol id="icon-csv-export" viewBox="0 0 24 24">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+      <path d="M14 3v5h5"></path>
+      <path d="M9 15h6"></path>
+      <path d="M12 12v6"></path>
+      <path d="M15 15l-3 3-3-3"></path>
+    </symbol>
+    <symbol id="icon-csv-import" viewBox="0 0 24 24">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path>
+      <path d="M14 3v5h5"></path>
+      <path d="M9 15h6"></path>
+      <path d="M12 18v-6"></path>
+      <path d="M9 15l3-3 3 3"></path>
+    </symbol>
+    <symbol id="icon-reset-confirmations" viewBox="0 0 24 24">
+      <path d="M4 6v5h5"></path>
+      <path d="M5.1 15a7.5 7.5 0 1 0 1.7-7.8L4 11"></path>
+      <path d="M9.6 12.1l1.8 1.8 3.6-4"></path>
+    </symbol>
+    <symbol id="icon-delete-list" viewBox="0 0 24 24">
+      <path d="M5 7h14"></path>
+      <path d="M9 7V5h6v2"></path>
+      <path d="M7 7l1 13h8l1-13"></path>
+      <path d="M10 11v5"></path>
+      <path d="M14 11v5"></path>
+    </symbol>
+  </svg>
+
   <main class="app-shell">
     <header class="hero panel">
       <div>
         <p class="eyebrow">Event</p>
         <h1>Ticketverwaltung</h1>
       </div>
-      <div class="hero-actions">
-        <button class="btn btn-soft" id="exportCsvBtn" type="button">Aktuelle Tickets als CSV exportieren</button>
-        <button class="btn btn-soft" id="importCsvBtn" type="button">Tickets als CSV importieren</button>
-        <button class="btn btn-soft" id="resetConfirmationsBtn" type="button">Bestätigungsdialoge zurücksetzen</button>
-        <button class="btn btn-danger" id="resetBtn" type="button">Zurücksetzen</button>
+      <div class="hero-actions" role="toolbar" aria-label="Header-Aktionen">
+        <button class="btn btn-soft header-icon-btn icon-action" id="exportCsvBtn" type="button" data-tooltip="Tickets als CSV-Datei exportieren" aria-label="Tickets als CSV-Datei exportieren">
+          <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-csv-export"></use></svg>
+          <span class="sr-only">Tickets als CSV-Datei exportieren</span>
+        </button>
+        <button class="btn btn-soft header-icon-btn icon-action" id="importCsvBtn" type="button" data-tooltip="Tickets aus CSV-Datei importieren" aria-label="Tickets aus CSV-Datei importieren">
+          <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-csv-import"></use></svg>
+          <span class="sr-only">Tickets aus CSV-Datei importieren</span>
+        </button>
+        <button class="btn btn-soft header-icon-btn icon-action" id="resetConfirmationsBtn" type="button" data-tooltip="Bestätigungsdialoge zurücksetzen" aria-label="Bestätigungsdialoge zurücksetzen">
+          <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-reset-confirmations"></use></svg>
+          <span class="sr-only">Bestätigungsdialoge zurücksetzen</span>
+        </button>
+        <button class="btn btn-danger header-icon-btn icon-action" id="resetBtn" type="button" data-tooltip="Alle Tickets aus der Liste löschen" aria-label="Alle Tickets aus der Liste löschen">
+          <svg class="header-action-icon" aria-hidden="true" focusable="false"><use href="#icon-delete-list"></use></svg>
+          <span class="sr-only">Alle Tickets aus der Liste löschen</span>
+        </button>
         <input id="csvImportInput" type="file" accept=".csv,text/csv" hidden>
       </div>
     </header>

@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.14";
+  const APP_VERSION = "2026.05.07.15";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -1386,9 +1386,9 @@
     }
 
     const confirmed = await openDialog({
-      title: "Daten zurücksetzen",
-      message: "Alle Daten zurücksetzen?",
-      confirmText: "Zurücksetzen",
+      title: "Alle Tickets löschen",
+      message: "Alle Tickets aus der Liste löschen?",
+      confirmText: "Alle Tickets löschen",
       cancelText: "Abbrechen",
       showCancel: true,
       variant: "danger",
@@ -1414,7 +1414,7 @@
 
     clearForm();
     renderApp();
-    showToast("Daten zurückgesetzt.", "success");
+    showToast("Alle Tickets gelöscht.", "success");
   }
 
   function openDialog({
