@@ -1,10 +1,11 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.11";
+  const APP_VERSION = "2026.05.07.13";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
+  const VERSION_RELOAD_PARAM = "_reload";
   const VERSION_MANIFEST_PATH = "version.json";
   const REMOTE_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -107,6 +108,7 @@
     bindEvents();
     updatePriceUi();
     renderApp();
+    cleanVersionParamsFromUrl();
     clearVersionReloadGuard();
     startRemoteVersionChecks();
   }
@@ -208,7 +210,7 @@
 
       targetUrl.searchParams.set(VERSION_URL_PARAM, normalizeAppVersion(version) || APP_VERSION);
       if (cacheBust) {
-        targetUrl.searchParams.set("_reload", String(Date.now()));
+        targetUrl.searchParams.set(VERSION_RELOAD_PARAM, String(Date.now()));
       }
       window.location.replace(targetUrl.href);
     } catch {
@@ -222,6 +224,20 @@
       return normalizeAppVersion(version);
     } catch {
       return "";
+    }
+  }
+
+  function cleanVersionParamsFromUrl() {
+    try {
+      const targetUrl = new URL(window.location.href);
+      if (!isReloadableAppUrl(targetUrl)) return;
+      if (!targetUrl.searchParams.has(VERSION_URL_PARAM) && !targetUrl.searchParams.has(VERSION_RELOAD_PARAM)) return;
+
+      targetUrl.searchParams.delete(VERSION_URL_PARAM);
+      targetUrl.searchParams.delete(VERSION_RELOAD_PARAM);
+      window.history.replaceState(null, document.title, targetUrl.href);
+    } catch {
+      // Die sichtbare URL-Bereinigung ist rein kosmetisch.
     }
   }
 
