@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.10";
+  const APP_VERSION = "2026.05.07.11";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -16,6 +16,7 @@
   const MAX_PHONE_LENGTH = 20;
   const MAX_SEARCH_LENGTH = 80;
   const MAX_STORAGE_LENGTH = 250_000;
+  const MAX_CSV_IMPORT_BYTES = 512_000;
   const MAX_VERSION_LENGTH = 64;
   const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
 
@@ -35,6 +36,7 @@
     TICKET_DELETE: "ticket-delete",
     BULK_TICKET_DELETE: "bulk-ticket-delete",
     DATA_RESET: "data-reset",
+    CSV_IMPORT: "csv-import",
     TICKET_LIMIT: "ticket-limit",
   });
   const DIALOG_KEY_SET = new Set(Object.values(DIALOG_KEYS));
@@ -82,6 +84,8 @@
     remainingCount: document.querySelector("#remainingCount"),
     totalRevenue: document.querySelector("#totalRevenue"),
     exportCsvBtn: document.querySelector("#exportCsvBtn"),
+    importCsvBtn: document.querySelector("#importCsvBtn"),
+    csvImportInput: document.querySelector("#csvImportInput"),
     resetBtn: document.querySelector("#resetBtn"),
     limitBadge: document.querySelector("#limitBadge"),
     toast: document.querySelector("#toast"),
@@ -307,6 +311,8 @@
     els.bulkDeleteBtn.addEventListener("click", deleteSelectedTickets);
     els.resetConfirmationsBtn.addEventListener("click", resetHiddenConfirmations);
     els.exportCsvBtn.addEventListener("click", exportCsv);
+    els.importCsvBtn.addEventListener("click", openCsvImportPicker);
+    els.csvImportInput.addEventListener("change", handleCsvImportChange);
     els.resetBtn.addEventListener("click", resetAllData);
 
     els.dialogCancelBtn.addEventListener("click", () => closeDialog(false));
@@ -985,6 +991,303 @@
     URL.revokeObjectURL(url);
 
     showToast("CSV exportiert.", "success");
+  }
+
+  function openCsvImportPicker() {
+    els.csvImportInput.value = "";
+    els.csvImportInput.click();
+  }
+
+  async function handleCsvImportChange() {
+    const file = els.csvImportInput.files?.[0];
+    if (!file) return;
+
+    try {
+      await importCsvFile(file);
+    } catch {
+      showToast("CSV konnte nicht importiert werden.", "danger");
+    } finally {
+      els.csvImportInput.value = "";
+    }
+  }
+
+  async function importCsvFile(file) {
+    if (file.size > MAX_CSV_IMPORT_BYTES) {
+      showToast("CSV-Datei ist zu groß.", "warning");
+      return;
+    }
+
+    const text = await readTextFile(file);
+    if (!String(text ?? "").replace(/^\uFEFF/, "").trim()) {
+      showToast("CSV-Datei ist leer.", "warning");
+      return;
+    }
+
+    const result = parseTicketsCsv(text);
+    if (!result.hasHeader) {
+      showToast("CSV-Spalten nicht erkannt.", "warning");
+      return;
+    }
+
+    if (result.tickets.length === 0) {
+      showToast("Keine gültigen Tickets gefunden.", "warning");
+      return;
+    }
+
+    if (state.tickets.length > 0) {
+      const confirmed = await openDialog({
+        title: "CSV importieren",
+        message: `Aktuelle Tabelle durch ${formatTicketCount(result.tickets.length)} aus der CSV ersetzen?`,
+        confirmText: "Importieren",
+        cancelText: "Abbrechen",
+        showCancel: true,
+        variant: "warning",
+        preferenceKey: DIALOG_KEYS.CSV_IMPORT,
+      });
+
+      if (!confirmed) return;
+    }
+
+    if (!replaceTicketsFromImport(result)) return;
+
+    showToast(createCsvImportMessage(result.tickets.length, result.skippedCount), result.skippedCount ? "warning" : "success");
+  }
+
+  function readTextFile(file) {
+    if (typeof file.text === "function") {
+      return file.text();
+    }
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+      reader.addEventListener("error", () => reject(reader.error));
+      reader.readAsText(file, "utf-8");
+    });
+  }
+
+  function replaceTicketsFromImport(result) {
+    const previousTickets = state.tickets;
+    const previousCounters = { ...state.counters };
+    const previousSelectedTicketIds = new Set(state.selectedTicketIds);
+
+    state.tickets = result.tickets;
+    state.counters = result.counters;
+    clearSelectedTickets();
+
+    if (!saveData()) {
+      state.tickets = previousTickets;
+      state.counters = previousCounters;
+      state.selectedTicketIds = previousSelectedTicketIds;
+      renderApp();
+      return false;
+    }
+
+    clearForm();
+    renderApp();
+    return true;
+  }
+
+  function parseTicketsCsv(text) {
+    const source = String(text ?? "").replace(/^\uFEFF/, "");
+    const semicolonResult = parseTicketsCsvWithDelimiter(source, ";");
+    if (semicolonResult) return semicolonResult;
+
+    const commaResult = parseTicketsCsvWithDelimiter(source, ",");
+    if (commaResult) return commaResult;
+
+    return {
+      tickets: [],
+      counters: { normal: 1, vip: 1 },
+      skippedCount: 0,
+      hasHeader: false,
+    };
+  }
+
+  function parseTicketsCsvWithDelimiter(source, delimiter) {
+    const rows = parseDelimitedCsv(source, delimiter).filter((row) => !isEmptyCsvRow(row));
+    if (rows.length === 0) return null;
+
+    const headerIndices = getCsvHeaderIndices(rows[0]);
+    if (!headerIndices) return null;
+
+    return buildImportedTickets(rows.slice(1), headerIndices);
+  }
+
+  function parseDelimitedCsv(source, delimiter) {
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let inQuotes = false;
+
+    for (let index = 0; index < source.length; index += 1) {
+      const char = source[index];
+
+      if (inQuotes) {
+        if (char === '"') {
+          if (source[index + 1] === '"') {
+            cell += '"';
+            index += 1;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cell += char;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inQuotes = true;
+        continue;
+      }
+
+      if (char === delimiter) {
+        row.push(cell);
+        cell = "";
+        continue;
+      }
+
+      if (char === "\r" || char === "\n") {
+        if (char === "\r" && source[index + 1] === "\n") {
+          index += 1;
+        }
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = "";
+        continue;
+      }
+
+      cell += char;
+    }
+
+    if (cell || row.length > 0) {
+      row.push(cell);
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  function getCsvHeaderIndices(header) {
+    const headers = header.map(normalizeCsvHeader);
+    const indices = {
+      ticketNumber: findCsvHeaderIndex(headers, ["ticketnummer", "ticket number", "ticketnumber", "nummer"]),
+      firstName: findCsvHeaderIndex(headers, ["vorname", "first name", "firstname"]),
+      lastName: findCsvHeaderIndex(headers, ["nachname", "last name", "lastname"]),
+      phone: findCsvHeaderIndex(headers, ["telefonnummer", "telefon", "phone", "phone number"]),
+      type: findCsvHeaderIndex(headers, ["tickettyp", "ticket typ", "typ", "type"]),
+      price: findCsvHeaderIndex(headers, ["preis", "price"]),
+    };
+
+    return Object.values(indices).some((index) => index < 0) ? null : indices;
+  }
+
+  function findCsvHeaderIndex(headers, aliases) {
+    const normalizedAliases = aliases.map(normalizeCsvHeader);
+    return headers.findIndex((header) => normalizedAliases.includes(header));
+  }
+
+  function buildImportedTickets(rows, indices) {
+    const usedIds = new Set();
+    const usedTicketNumbers = new Set();
+    const counters = { normal: 1, vip: 1 };
+    const importedAt = new Date().toISOString();
+    const tickets = [];
+    let skippedCount = 0;
+
+    rows.forEach((row) => {
+      if (isEmptyCsvRow(row)) return;
+
+      if (tickets.length >= MAX_TICKETS) {
+        skippedCount += 1;
+        return;
+      }
+
+      const type = parseImportedTicketType(row[indices.type])
+        || inferTicketTypeFromNumber(row[indices.ticketNumber])
+        || "normal";
+      const defaultPrice = PRICES[type];
+      const rawPrice = parseSafeInteger(row[indices.price]);
+      const price = rawPrice > 0 && rawPrice <= MAX_PRICE ? rawPrice : defaultPrice;
+      const firstName = normalizeStoredText(unescapeImportedCsvCell(row[indices.firstName]), MAX_NAME_LENGTH);
+      const lastName = normalizeStoredText(unescapeImportedCsvCell(row[indices.lastName]), MAX_NAME_LENGTH);
+      const phone = sanitizeDigits(row[indices.phone]).slice(0, MAX_PHONE_LENGTH);
+
+      if (!firstName || !lastName || !phone) {
+        skippedCount += 1;
+        return;
+      }
+
+      const ticket = normalizeTicket({
+        id: createId(),
+        ticketNumber: row[indices.ticketNumber],
+        firstName,
+        lastName,
+        phone,
+        type,
+        price,
+        customPrice: price !== defaultPrice,
+        createdAt: importedAt,
+        updatedAt: importedAt,
+      }, usedIds, usedTicketNumbers, counters);
+
+      if (ticket) {
+        tickets.push(ticket);
+      } else {
+        skippedCount += 1;
+      }
+    });
+
+    return {
+      tickets,
+      counters: mergeCounters(counters, deriveCountersFromTickets(tickets)),
+      skippedCount,
+      hasHeader: true,
+    };
+  }
+
+  function isEmptyCsvRow(row) {
+    return row.every((cell) => !String(cell ?? "").trim());
+  }
+
+  function normalizeCsvHeader(value) {
+    return String(value ?? "")
+      .replace(/^\uFEFF/, "")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLocaleLowerCase("de-DE")
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function parseImportedTicketType(value) {
+    const text = normalizeStoredText(unescapeImportedCsvCell(value), 20).toLocaleLowerCase("de-DE");
+    if (text === "vip") return "vip";
+    if (text === "normal" || text === "n") return "normal";
+    return "";
+  }
+
+  function inferTicketTypeFromNumber(value) {
+    const text = String(value ?? "").trim().toUpperCase();
+    if (/^VIP-\d/.test(text)) return "vip";
+    if (/^N-\d/.test(text)) return "normal";
+    return "";
+  }
+
+  function unescapeImportedCsvCell(value) {
+    const text = String(value ?? "");
+    return /^'[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
+  }
+
+  function createCsvImportMessage(importedCount, skippedCount) {
+    if (skippedCount > 0) {
+      return `${formatTicketCount(importedCount)} importiert, ${skippedCount} Zeilen übersprungen.`;
+    }
+
+    return `${formatTicketCount(importedCount)} importiert.`;
   }
 
   // Verhindert CSV-/Spreadsheet-Formel-Injektion beim Öffnen in Tabellenprogrammen.

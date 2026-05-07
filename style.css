@@ -116,6 +116,10 @@ h2 {
   flex-wrap: wrap;
 }
 
+.hero-actions {
+  justify-content: flex-end;
+}
+
 .btn {
   min-height: var(--control-h);
   padding: 0 16px;
@@ -463,34 +467,6 @@ input:disabled {
 .selection-bar .btn {
   min-height: 38px;
   padding-inline: 14px;
-}
-
-.table-options {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin: 14px 0 0;
-  padding: 14px 2px 0;
-  border-top: 1px solid var(--line-soft);
-}
-
-.table-options-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.table-options-copy strong {
-  color: var(--muted);
-  font-size: 0.86rem;
-  line-height: 1.2;
-}
-
-.table-options-copy span {
-  color: var(--muted-2);
-  font-size: 0.82rem;
-  line-height: 1.35;
 }
 
 .table-wrap {
@@ -1253,16 +1229,6 @@ tbody tr:last-child td {
   }
 
   .selection-bar .btn {
-    width: 100%;
-  }
-
-  .table-options {
-    align-items: stretch;
-    flex-direction: column;
-    justify-content: flex-start;
-  }
-
-  .table-options .btn {
     width: 100%;
   }
 
