@@ -263,9 +263,14 @@ select:focus-visible,
   align-items: start;
 }
 
+.grid-layout > * {
+  min-width: 0;
+}
+
 .form-card,
 .table-card {
   padding: 20px;
+  min-width: 0;
 }
 
 .section-title {
@@ -485,50 +490,58 @@ input:disabled {
 }
 
 .table-wrap {
-  overflow-x: auto;
+  overflow: hidden;
+  max-width: 100%;
   border-radius: 20px;
   border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.035);
+  background-clip: padding-box;
+  isolation: isolate;
 }
 
 table {
   width: 100%;
+  max-width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
-  min-width: 880px;
+  min-width: 0;
 }
 
 col.col-select {
-  width: 52px;
+  width: 5.2%;
 }
 
 col.col-ticket {
-  width: 126px;
+  width: 12.8%;
 }
 
 col.col-name {
-  width: 108px;
+  width: 11.5%;
 }
 
 col.col-phone {
-  width: 154px;
+  width: 14.8%;
 }
 
 col.col-type {
-  width: 100px;
+  width: 10%;
+}
+
+col.col-menu {
+  width: 10.5%;
 }
 
 col.col-price {
-  width: 100px;
+  width: 10.4%;
 }
 
 col.col-actions {
-  width: 104px;
+  width: 12.3%;
 }
 
 th,
 td {
-  padding: 16px 14px;
+  padding: 15px 10px;
   text-align: center;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   vertical-align: middle;
@@ -538,13 +551,26 @@ td {
 
 th {
   color: rgba(248, 241, 255, 0.66);
-  font-size: 0.74rem;
+  font-size: clamp(0.68rem, 0.82vw, 0.74rem);
   letter-spacing: 0;
   line-height: 1.15;
   text-transform: uppercase;
   font-weight: 900;
   background: rgba(185, 156, 255, 0.055);
-  white-space: nowrap;
+  white-space: normal;
+  word-break: normal;
+}
+
+thead th:first-child {
+  border-top-left-radius: 20px;
+}
+
+thead th:last-child {
+  border-top-right-radius: 20px;
+}
+
+thead th {
+  background-clip: padding-box;
 }
 
 th + th,
@@ -559,8 +585,8 @@ td:last-child {
 
 .select-column,
 .select-cell {
-  width: 54px;
-  padding-inline: 12px;
+  width: auto;
+  padding-inline: 8px;
   text-align: center;
 }
 
@@ -620,10 +646,22 @@ tbody tr:last-child td {
   border: 1px solid rgba(140, 240, 197, 0.17);
 }
 
+.menu-standard {
+  color: #f6e8ff;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.menu-veggie {
+  color: #bdf7d9;
+  background: rgba(140, 240, 197, 0.11);
+  border: 1px solid rgba(140, 240, 197, 0.18);
+}
+
 .action-cell {
   display: flex;
   justify-content: center;
-  gap: 9px;
+  gap: 7px;
   flex-wrap: nowrap;
 }
 
@@ -1010,6 +1048,34 @@ tbody tr:last-child td {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 1240px) and (min-width: 861px) {
+  .table-card {
+    padding-inline: 16px;
+  }
+
+  th,
+  td {
+    padding-inline: 8px;
+  }
+
+  .badge {
+    min-height: 26px;
+    padding-inline: 8px;
+    font-size: 0.74rem;
+  }
+
+  .action-btn {
+    min-width: 34px;
+    min-height: 34px;
+    border-radius: 11px;
+  }
+
+  .action-icon {
+    width: 16px;
+    height: 16px;
   }
 }
 

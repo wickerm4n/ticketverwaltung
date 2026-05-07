@@ -6,14 +6,14 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.05.07.19">
+  <meta name="app-version" content="2026.05.07.22">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="icon.svg?v=2026.05.07.19" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=2026.05.07.19">
-  <script src="app.js?v=2026.05.07.19" defer></script>
+  <link rel="icon" href="icon.svg?v=2026.05.07.22" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=2026.05.07.22">
+  <script src="app.js?v=2026.05.07.22" defer></script>
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -127,6 +127,14 @@
           </select>
         </label>
 
+        <label class="field">
+          <span>Menü</span>
+          <select id="ticketMenu">
+            <option value="menu1">Menü 1</option>
+            <option value="menu2">Menü 2 (Veggie)</option>
+          </select>
+        </label>
+
         <label class="check-row">
           <input id="customPriceToggle" type="checkbox">
           <span class="check-visual" aria-hidden="true"></span>
@@ -182,6 +190,7 @@
               <col class="col-name">
               <col class="col-phone">
               <col class="col-type">
+              <col class="col-menu">
               <col class="col-price">
               <col class="col-actions">
             </colgroup>
@@ -200,6 +209,7 @@
                 <th>Nachname</th>
                 <th>Telefonnummer</th>
                 <th>Tickettyp</th>
+                <th>Menü</th>
                 <th>Preis</th>
                 <th>Aktionen</th>
               </tr>

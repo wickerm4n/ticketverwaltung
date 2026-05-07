@@ -1,9 +1,10 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.19";
+  const APP_VERSION = "2026.05.07.22";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
+  const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
   const VERSION_URL_PARAM = "_appv";
   const VERSION_RELOAD_PARAM = "_reload";
   const VERSION_MANIFEST_PATH = "version.json";
@@ -34,6 +35,11 @@
     vip: "VIP",
   });
 
+  const MENU_LABELS = Object.freeze({
+    menu1: "Menü 1",
+    menu2: "Menü 2 (Veggie)",
+  });
+
   const TOAST_TYPES = new Set(["info", "success", "warning", "danger"]);
   const TOAST_DURATION_MS = 4200;
   const DIALOG_KEYS = Object.freeze({
@@ -57,6 +63,7 @@
     dialogReturnFocus: null,
     dialogPreferenceKey: "",
     versionCheckInFlight: false,
+    lastRemoteVersionCheckAt: 0,
   };
 
   const els = {
@@ -66,6 +73,7 @@
     lastName: document.querySelector("#lastName"),
     phone: document.querySelector("#phone"),
     ticketType: document.querySelector("#ticketType"),
+    ticketMenu: document.querySelector("#ticketMenu"),
     customPriceToggle: document.querySelector("#customPriceToggle"),
     customPriceField: document.querySelector("#customPriceField"),
     customPrice: document.querySelector("#customPrice"),
@@ -105,7 +113,7 @@
   };
 
   function init() {
-    if (checkAppVersionAndMaybeReload()) return;
+    rememberCurrentAppVersion();
 
     loadData();
     bindEvents();
@@ -116,46 +124,42 @@
   }
 
 
-  function checkAppVersionAndMaybeReload() {
+  function rememberCurrentAppVersion() {
     const storedVersion = safeStorageGet(localStorage, VERSION_STORAGE_KEY, MAX_VERSION_LENGTH);
+    if (storedVersion !== APP_VERSION) {
+      safeStorageSet(localStorage, VERSION_STORAGE_KEY, APP_VERSION);
+    }
+
     const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
-    const urlVersion = getUrlVersionParam();
-
-    if (storedVersion === APP_VERSION) {
-      return false;
+    if (guardedVersion === APP_VERSION) {
+      safeStorageRemove(sessionStorage, VERSION_RELOAD_GUARD_KEY);
     }
-
-    safeStorageSet(localStorage, VERSION_STORAGE_KEY, APP_VERSION);
-
-    if (guardedVersion === APP_VERSION || urlVersion === APP_VERSION) {
-      return false;
-    }
-
-    safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, APP_VERSION);
-    reloadWithVersionParam();
-    return true;
   }
 
   function startRemoteVersionChecks() {
     if (!canCheckRemoteVersion()) return;
 
-    void checkRemoteVersion();
+    state.lastRemoteVersionCheckAt = Date.now();
 
     window.setInterval(() => {
-      if (!document.hidden) {
-        void checkRemoteVersion();
-      }
+      void checkRemoteVersion();
     }, REMOTE_VERSION_CHECK_INTERVAL_MS);
 
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) {
+      if (!document.hidden && shouldCheckRemoteVersionNow()) {
         void checkRemoteVersion();
       }
     });
 
     window.addEventListener("focus", () => {
-      void checkRemoteVersion();
+      if (shouldCheckRemoteVersionNow()) {
+        void checkRemoteVersion();
+      }
     });
+  }
+
+  function shouldCheckRemoteVersionNow() {
+    return Date.now() - state.lastRemoteVersionCheckAt >= REMOTE_VERSION_CHECK_INTERVAL_MS;
   }
 
   function canCheckRemoteVersion() {
@@ -166,21 +170,28 @@
     if (state.versionCheckInFlight) return;
 
     state.versionCheckInFlight = true;
+    state.lastRemoteVersionCheckAt = Date.now();
 
     try {
       const latestVersion = await fetchLatestAppVersion();
       if (!latestVersion || !isRemoteVersionNewer(latestVersion, APP_VERSION)) return;
 
       const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
+      const lastRemoteVersion = safeStorageGet(localStorage, VERSION_LAST_REMOTE_KEY, MAX_VERSION_LENGTH);
       const urlVersion = getUrlVersionParam();
+
       if (guardedVersion === latestVersion || urlVersion === latestVersion) return;
 
+      safeStorageSet(localStorage, VERSION_LAST_REMOTE_KEY, latestVersion);
       safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, latestVersion);
-      showToast("Neue Version wird geladen.", "info");
+
+      if (lastRemoteVersion !== latestVersion) {
+        showToast("Neue Version wird geladen.", "info");
+      }
 
       window.setTimeout(() => {
         reloadWithVersionParam(latestVersion, true);
-      }, 350);
+      }, 250);
     } catch {
       // Versionsprüfung ist ein Komfort-Feature und darf die App nicht stören.
     } finally {
@@ -412,18 +423,23 @@
       lastName: normalizeStoredText(els.lastName.value, MAX_NAME_LENGTH),
       phone: sanitizeDigits(els.phone.value).slice(0, MAX_PHONE_LENGTH),
       type,
+      menu: isValidMenu(els.ticketMenu.value) ? els.ticketMenu.value : "menu1",
       customPrice: customPriceEnabled,
       price: customPriceEnabled ? manualPrice : PRICES[type],
     };
   }
 
   function validateFormData(data) {
-    if (!data.firstName || !data.lastName || !data.phone || !data.type) {
+    if (!data.firstName || !data.lastName || !data.phone || !data.type || !data.menu) {
       return { message: "Bitte alle Felder ausfüllen." };
     }
 
     if (!isValidType(data.type)) {
       return { message: "Ungültiger Tickettyp." };
+    }
+
+    if (!isValidMenu(data.menu)) {
+      return { message: "Ungültiges Menü." };
     }
 
     if (data.customPrice && (!Number.isSafeInteger(data.price) || data.price <= 0 || data.price > MAX_PRICE)) {
@@ -457,6 +473,7 @@
       lastName: data.lastName,
       phone: data.phone,
       type: data.type,
+      menu: data.menu,
       price: data.price,
       customPrice: data.customPrice,
       createdAt: new Date().toISOString(),
@@ -482,6 +499,7 @@
     ticket.lastName = data.lastName;
     ticket.phone = data.phone;
     ticket.type = data.type;
+    ticket.menu = data.menu;
     ticket.price = data.price;
     ticket.customPrice = data.customPrice;
     ticket.updatedAt = new Date().toISOString();
@@ -612,6 +630,7 @@
     els.lastName.value = ticket.lastName;
     els.phone.value = sanitizeDigits(ticket.phone).slice(0, MAX_PHONE_LENGTH);
     els.ticketType.value = ticket.type;
+    els.ticketMenu.value = isValidMenu(ticket.menu) ? ticket.menu : "menu1";
     els.customPriceToggle.checked = customPriceEnabled;
     els.customPrice.value = String(storedPrice || "");
 
@@ -709,7 +728,7 @@
       const row = document.createElement("tr");
       row.className = "empty-row";
       const cell = document.createElement("td");
-      cell.colSpan = 8;
+      cell.colSpan = 9;
       cell.textContent = "Keine Einträge";
       row.append(cell);
       els.tableBody.append(row);
@@ -730,6 +749,7 @@
         createTextCell(ticket.lastName, "", "Nachname"),
         createTextCell(ticket.phone, "", "Telefonnummer"),
         createBadgeCell(ticket.type, "Tickettyp"),
+        createMenuCell(ticket.menu, "Menü"),
         createTextCell(formatCurrency(ticket.price), "", "Preis"),
         createActionCell(ticket.id),
       );
@@ -785,6 +805,18 @@
 
     badge.className = `badge ${safeType === "vip" ? "badge-vip" : "badge-normal"}`;
     badge.textContent = TYPE_LABELS[safeType];
+    cell.append(badge);
+    return cell;
+  }
+
+  function createMenuCell(menu, label = "") {
+    const cell = document.createElement("td");
+    const badge = document.createElement("span");
+    const safeMenu = isValidMenu(menu) ? menu : "menu1";
+    if (label) cell.dataset.label = label;
+
+    badge.className = `badge menu-badge ${safeMenu === "menu2" ? "menu-veggie" : "menu-standard"}`;
+    badge.textContent = MENU_LABELS[safeMenu];
     cell.append(badge);
     return cell;
   }
@@ -930,6 +962,7 @@
         ticket.lastName,
         ticket.phone,
         TYPE_LABELS[ticket.type],
+        MENU_LABELS[isValidMenu(ticket.menu) ? ticket.menu : "menu1"],
       ].join(" "));
 
       return searchableText.includes(query);
@@ -995,6 +1028,7 @@
     els.form.reset();
     els.editId.value = "";
     els.ticketType.value = "normal";
+    els.ticketMenu.value = "menu1";
     els.customPriceToggle.checked = false;
     els.formTitle.textContent = "Ticket hinzufügen";
     els.formModeBadge.textContent = "Neu";
@@ -1012,13 +1046,14 @@
     }
 
     const rows = [
-      ["Ticketnummer", "Vorname", "Nachname", "Telefonnummer", "Tickettyp", "Preis"],
+      ["Ticketnummer", "Vorname", "Nachname", "Telefonnummer", "Tickettyp", "Menü", "Preis"],
       ...state.tickets.map((ticket) => [
         ticket.ticketNumber,
         ticket.firstName,
         ticket.lastName,
         ticket.phone,
         TYPE_LABELS[ticket.type] || ticket.type,
+        MENU_LABELS[isValidMenu(ticket.menu) ? ticket.menu : "menu1"],
         ticket.price,
       ]),
     ];
@@ -1257,10 +1292,20 @@
       lastName: findCsvHeaderIndex(headers, ["nachname", "last name", "lastname"]),
       phone: findCsvHeaderIndex(headers, ["telefonnummer", "telefon", "phone", "phone number"]),
       type: findCsvHeaderIndex(headers, ["tickettyp", "ticket typ", "typ", "type"]),
+      menu: findCsvHeaderIndex(headers, ["menü", "menu", "speise", "essen", "meal", "food"]),
       price: findCsvHeaderIndex(headers, ["preis", "price"]),
     };
 
-    return Object.values(indices).some((index) => index < 0) ? null : indices;
+    const requiredIndices = [
+      indices.ticketNumber,
+      indices.firstName,
+      indices.lastName,
+      indices.phone,
+      indices.type,
+      indices.price,
+    ];
+
+    return requiredIndices.some((index) => index < 0) ? null : indices;
   }
 
   function findCsvHeaderIndex(headers, aliases) {
@@ -1287,6 +1332,7 @@
       const type = parseImportedTicketType(row[indices.type])
         || inferTicketTypeFromNumber(row[indices.ticketNumber])
         || "normal";
+      const menu = parseImportedMenu(indices.menu >= 0 ? row[indices.menu] : "") || "menu1";
       const defaultPrice = PRICES[type];
       const rawPrice = parseImportedPrice(row[indices.price]);
       const price = rawPrice > 0 && rawPrice <= MAX_PRICE ? rawPrice : defaultPrice;
@@ -1306,6 +1352,7 @@
         lastName,
         phone,
         type,
+        menu,
         price,
         customPrice: price !== defaultPrice,
         createdAt: importedAt,
@@ -1347,6 +1394,17 @@
     const text = normalizeStoredText(unescapeImportedCsvCell(value), 20).toLocaleLowerCase("de-DE");
     if (text === "vip") return "vip";
     if (text === "normal" || text === "n") return "normal";
+    return "";
+  }
+
+  function parseImportedMenu(value) {
+    const text = normalizeCsvHeader(unescapeImportedCsvCell(value));
+    if (["menu 2", "menue 2", "menü 2", "menu2", "menue2", "menü2", "Veggie", "vegetarisch", "vegetarian"].includes(text)) {
+      return "menu2";
+    }
+    if (["menu 1", "menue 1", "menü 1", "menu1", "menue1", "menü1"].includes(text)) {
+      return "menu1";
+    }
     return "";
   }
 
@@ -1662,6 +1720,7 @@
       lastName: normalizeStoredText(ticket.lastName, MAX_NAME_LENGTH),
       phone: sanitizeDigits(ticket.phone).slice(0, MAX_PHONE_LENGTH),
       type,
+      menu: isValidMenu(ticket.menu) ? ticket.menu : "menu1",
       price,
       customPrice: Boolean(ticket.customPrice) || price !== defaultPrice,
       createdAt: normalizeIsoDate(ticket.createdAt),
@@ -1681,6 +1740,7 @@
       lastName: normalizeStoredText(ticket.lastName, MAX_NAME_LENGTH),
       phone: sanitizeDigits(ticket.phone).slice(0, MAX_PHONE_LENGTH),
       type,
+      menu: isValidMenu(ticket.menu) ? ticket.menu : "menu1",
       price: price > 0 && price <= MAX_PRICE ? price : defaultPrice,
       customPrice: Boolean(ticket.customPrice),
       createdAt: normalizeIsoDate(ticket.createdAt),
@@ -1830,6 +1890,10 @@
     }
 
     return date.toISOString();
+  }
+
+  function isValidMenu(menu) {
+    return Object.prototype.hasOwnProperty.call(MENU_LABELS, menu);
   }
 
   function isValidType(type) {
