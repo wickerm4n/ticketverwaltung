@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.18";
+  const APP_VERSION = "2026.05.07.19";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
@@ -112,7 +112,6 @@
     updatePriceUi();
     renderApp();
     cleanVersionParamsFromUrl();
-    clearVersionReloadGuard();
     startRemoteVersionChecks();
   }
 
@@ -170,10 +169,11 @@
 
     try {
       const latestVersion = await fetchLatestAppVersion();
-      if (!latestVersion || latestVersion === APP_VERSION) return;
+      if (!latestVersion || !isRemoteVersionNewer(latestVersion, APP_VERSION)) return;
 
       const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
-      if (guardedVersion === latestVersion) return;
+      const urlVersion = getUrlVersionParam();
+      if (guardedVersion === latestVersion || urlVersion === latestVersion) return;
 
       safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, latestVersion);
       showToast("Neue Version wird geladen.", "info");
@@ -250,6 +250,29 @@
   function normalizeAppVersion(version) {
     const text = String(version ?? "").trim();
     return /^[\w.-]{1,64}$/.test(text) ? text : "";
+  }
+
+  function isRemoteVersionNewer(remoteVersion, currentVersion) {
+    const remoteParts = normalizeAppVersion(remoteVersion).split(/[.-]/);
+    const currentParts = normalizeAppVersion(currentVersion).split(/[.-]/);
+    const length = Math.max(remoteParts.length, currentParts.length);
+
+    for (let index = 0; index < length; index += 1) {
+      const remotePart = remoteParts[index] ?? "0";
+      const currentPart = currentParts[index] ?? "0";
+      const remoteNumber = /^\d+$/.test(remotePart) ? Number(remotePart) : NaN;
+      const currentNumber = /^\d+$/.test(currentPart) ? Number(currentPart) : NaN;
+
+      if (Number.isFinite(remoteNumber) && Number.isFinite(currentNumber)) {
+        if (remoteNumber !== currentNumber) return remoteNumber > currentNumber;
+        continue;
+      }
+
+      const textCompare = remotePart.localeCompare(currentPart, undefined, { numeric: true, sensitivity: "base" });
+      if (textCompare !== 0) return textCompare > 0;
+    }
+
+    return false;
   }
 
   function isReloadableAppUrl(url) {
