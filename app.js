@@ -1,12 +1,13 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.07.13";
+  const APP_VERSION = "2026.05.07.14";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
   const VERSION_RELOAD_PARAM = "_reload";
   const VERSION_MANIFEST_PATH = "version.json";
+  const VERSION_MANIFEST_MAX_LENGTH = 256;
   const REMOTE_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
   const STORAGE_KEY = "eventTicketManagerData.v3";
@@ -18,8 +19,10 @@
   const MAX_SEARCH_LENGTH = 80;
   const MAX_STORAGE_LENGTH = 250_000;
   const MAX_CSV_IMPORT_BYTES = 512_000;
+  const MAX_CSV_IMPORT_CHARS = 512_000;
   const MAX_VERSION_LENGTH = 64;
   const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]{1,80}$/;
+  const CSV_FILE_TYPES = new Set(["text/csv", "application/csv", "application/vnd.ms-excel"]);
 
   const PRICES = Object.freeze({
     normal: 2500,
@@ -196,7 +199,10 @@
 
     if (!response.ok) return "";
 
-    const manifest = await response.json();
+    const manifestText = await response.text();
+    if (manifestText.length > VERSION_MANIFEST_MAX_LENGTH) return "";
+
+    const manifest = JSON.parse(manifestText);
     return normalizeAppVersion(manifest?.version);
   }
 
@@ -1028,18 +1034,33 @@
   }
 
   async function importCsvFile(file) {
+    if (!isLikelyCsvFile(file)) {
+      showToast("Bitte eine CSV-Datei auswählen.", "warning");
+      return;
+    }
+
     if (file.size > MAX_CSV_IMPORT_BYTES) {
       showToast("CSV-Datei ist zu groß.", "warning");
       return;
     }
 
     const text = await readTextFile(file);
+    if (text.length > MAX_CSV_IMPORT_CHARS) {
+      showToast("CSV-Datei ist zu groß.", "warning");
+      return;
+    }
+
     if (!String(text ?? "").replace(/^\uFEFF/, "").trim()) {
       showToast("CSV-Datei ist leer.", "warning");
       return;
     }
 
     const result = parseTicketsCsv(text);
+    if (result.malformed) {
+      showToast("CSV-Datei ist beschädigt.", "warning");
+      return;
+    }
+
     if (!result.hasHeader) {
       showToast("CSV-Spalten nicht erkannt.", "warning");
       return;
@@ -1067,6 +1088,13 @@
     if (!replaceTicketsFromImport(result)) return;
 
     showToast(createCsvImportMessage(result.tickets.length, result.skippedCount), result.skippedCount ? "warning" : "success");
+  }
+
+  function isLikelyCsvFile(file) {
+    const name = normalizeStoredText(file?.name, 160).toLocaleLowerCase("de-DE");
+    const type = normalizeStoredText(file?.type, 80).toLocaleLowerCase("en-US");
+
+    return name.endsWith(".csv") || (Boolean(type) && CSV_FILE_TYPES.has(type));
   }
 
   function readTextFile(file) {
@@ -1117,11 +1145,23 @@
       counters: { normal: 1, vip: 1 },
       skippedCount: 0,
       hasHeader: false,
+      malformed: false,
     };
   }
 
   function parseTicketsCsvWithDelimiter(source, delimiter) {
-    const rows = parseDelimitedCsv(source, delimiter).filter((row) => !isEmptyCsvRow(row));
+    const parsed = parseDelimitedCsv(source, delimiter);
+    if (parsed.malformed) {
+      return {
+        tickets: [],
+        counters: { normal: 1, vip: 1 },
+        skippedCount: 0,
+        hasHeader: false,
+        malformed: true,
+      };
+    }
+
+    const rows = parsed.rows.filter((row) => !isEmptyCsvRow(row));
     if (rows.length === 0) return null;
 
     const headerIndices = getCsvHeaderIndices(rows[0]);
@@ -1183,7 +1223,7 @@
       rows.push(row);
     }
 
-    return rows;
+    return { rows, malformed: inQuotes };
   }
 
   function getCsvHeaderIndices(header) {
@@ -1225,7 +1265,7 @@
         || inferTicketTypeFromNumber(row[indices.ticketNumber])
         || "normal";
       const defaultPrice = PRICES[type];
-      const rawPrice = parseSafeInteger(row[indices.price]);
+      const rawPrice = parseImportedPrice(row[indices.price]);
       const price = rawPrice > 0 && rawPrice <= MAX_PRICE ? rawPrice : defaultPrice;
       const firstName = normalizeStoredText(unescapeImportedCsvCell(row[indices.firstName]), MAX_NAME_LENGTH);
       const lastName = normalizeStoredText(unescapeImportedCsvCell(row[indices.lastName]), MAX_NAME_LENGTH);
@@ -1261,6 +1301,7 @@
       counters: mergeCounters(counters, deriveCountersFromTickets(tickets)),
       skippedCount,
       hasHeader: true,
+      malformed: false,
     };
   }
 
@@ -1284,6 +1325,14 @@
     if (text === "vip") return "vip";
     if (text === "normal" || text === "n") return "normal";
     return "";
+  }
+
+  function parseImportedPrice(value) {
+    const text = normalizeStoredText(unescapeImportedCsvCell(value), 40);
+    if (!text || /^[+\-]/.test(text) || /[=+\-@]/.test(text)) return 0;
+    if (!/^\d[\d\s.,$€]*$/.test(text)) return 0;
+
+    return parseSafeInteger(text);
   }
 
   function inferTicketTypeFromNumber(value) {
