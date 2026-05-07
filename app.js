@@ -1,10 +1,12 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.06.11";
+  const APP_VERSION = "2026.05.07.09";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_URL_PARAM = "_appv";
+  const VERSION_MANIFEST_PATH = "version.json";
+  const REMOTE_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
   const STORAGE_KEY = "eventTicketManagerData.v3";
   const LEGACY_STORAGE_KEYS = ["eventTicketManagerData.v2", "eventTicketManagerData.v1"];
@@ -29,15 +31,26 @@
 
   const TOAST_TYPES = new Set(["info", "success", "warning", "danger"]);
   const TOAST_DURATION_MS = 4200;
+  const DIALOG_KEYS = Object.freeze({
+    TICKET_DELETE: "ticket-delete",
+    BULK_TICKET_DELETE: "bulk-ticket-delete",
+    DATA_RESET: "data-reset",
+    TICKET_LIMIT: "ticket-limit",
+  });
+  const DIALOG_KEY_SET = new Set(Object.values(DIALOG_KEYS));
 
   const state = {
     tickets: [],
     counters: { normal: 1, vip: 1 },
+    preferences: createDefaultPreferences(),
+    selectedTicketIds: new Set(),
     search: "",
     filter: "all",
     editingId: null,
     dialogResolve: null,
     dialogReturnFocus: null,
+    dialogPreferenceKey: "",
+    versionCheckInFlight: false,
   };
 
   const els = {
@@ -57,6 +70,11 @@
     formError: document.querySelector("#formError"),
     searchInput: document.querySelector("#searchInput"),
     typeFilter: document.querySelector("#typeFilter"),
+    selectAllTickets: document.querySelector("#selectAllTickets"),
+    selectionBar: document.querySelector("#selectionBar"),
+    selectionCount: document.querySelector("#selectionCount"),
+    bulkDeleteBtn: document.querySelector("#bulkDeleteBtn"),
+    resetConfirmationsBtn: document.querySelector("#resetConfirmationsBtn"),
     tableBody: document.querySelector("#ticketTableBody"),
     soldCount: document.querySelector("#soldCount"),
     normalCount: document.querySelector("#normalCount"),
@@ -72,6 +90,8 @@
     dialogCard: document.querySelector(".modal-card"),
     dialogTitle: document.querySelector("#dialogTitle"),
     dialogMessage: document.querySelector("#dialogMessage"),
+    dialogSkipRow: document.querySelector("#dialogSkipRow"),
+    dialogSkipCheckbox: document.querySelector("#dialogSkipCheckbox"),
     dialogCancelBtn: document.querySelector("#dialogCancelBtn"),
     dialogConfirmBtn: document.querySelector("#dialogConfirmBtn"),
   };
@@ -84,6 +104,7 @@
     updatePriceUi();
     renderApp();
     clearVersionReloadGuard();
+    startRemoteVersionChecks();
   }
 
 
@@ -107,7 +128,73 @@
     return true;
   }
 
-  function reloadWithVersionParam() {
+  function startRemoteVersionChecks() {
+    if (!canCheckRemoteVersion()) return;
+
+    void checkRemoteVersion();
+
+    window.setInterval(() => {
+      if (!document.hidden) {
+        void checkRemoteVersion();
+      }
+    }, REMOTE_VERSION_CHECK_INTERVAL_MS);
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        void checkRemoteVersion();
+      }
+    });
+
+    window.addEventListener("focus", () => {
+      void checkRemoteVersion();
+    });
+  }
+
+  function canCheckRemoteVersion() {
+    return typeof fetch === "function" && ["http:", "https:"].includes(window.location.protocol);
+  }
+
+  async function checkRemoteVersion() {
+    if (state.versionCheckInFlight) return;
+
+    state.versionCheckInFlight = true;
+
+    try {
+      const latestVersion = await fetchLatestAppVersion();
+      if (!latestVersion || latestVersion === APP_VERSION) return;
+
+      const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
+      if (guardedVersion === latestVersion) return;
+
+      safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, latestVersion);
+      showToast("Neue Version wird geladen.", "info");
+
+      window.setTimeout(() => {
+        reloadWithVersionParam(latestVersion, true);
+      }, 350);
+    } catch {
+      // Versionsprüfung ist ein Komfort-Feature und darf die App nicht stören.
+    } finally {
+      state.versionCheckInFlight = false;
+    }
+  }
+
+  async function fetchLatestAppVersion() {
+    const manifestUrl = new URL(VERSION_MANIFEST_PATH, window.location.href);
+    manifestUrl.searchParams.set("_", String(Date.now()));
+
+    const response = await fetch(manifestUrl.href, {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+
+    if (!response.ok) return "";
+
+    const manifest = await response.json();
+    return normalizeAppVersion(manifest?.version);
+  }
+
+  function reloadWithVersionParam(version = APP_VERSION, cacheBust = false) {
     try {
       const targetUrl = new URL(window.location.href);
       if (!isReloadableAppUrl(targetUrl)) {
@@ -115,7 +202,10 @@
         return;
       }
 
-      targetUrl.searchParams.set(VERSION_URL_PARAM, APP_VERSION);
+      targetUrl.searchParams.set(VERSION_URL_PARAM, normalizeAppVersion(version) || APP_VERSION);
+      if (cacheBust) {
+        targetUrl.searchParams.set("_reload", String(Date.now()));
+      }
       window.location.replace(targetUrl.href);
     } catch {
       window.location.reload();
@@ -125,10 +215,15 @@
   function getUrlVersionParam() {
     try {
       const version = new URL(window.location.href).searchParams.get(VERSION_URL_PARAM) || "";
-      return /^[\w.-]{1,64}$/.test(version) ? version : "";
+      return normalizeAppVersion(version);
     } catch {
       return "";
     }
+  }
+
+  function normalizeAppVersion(version) {
+    const text = String(version ?? "").trim();
+    return /^[\w.-]{1,64}$/.test(text) ? text : "";
   }
 
   function isReloadableAppUrl(url) {
@@ -195,16 +290,22 @@
       const value = els.searchInput.value.slice(0, MAX_SEARCH_LENGTH);
       els.searchInput.value = value;
       state.search = normalizeSearch(value);
+      clearSelectedTickets();
       renderTable();
     });
 
     els.typeFilter.addEventListener("change", () => {
       state.filter = isValidFilter(els.typeFilter.value) ? els.typeFilter.value : "all";
       els.typeFilter.value = state.filter;
+      clearSelectedTickets();
       renderTable();
     });
 
     els.tableBody.addEventListener("click", handleTableAction);
+    els.tableBody.addEventListener("change", handleTableSelectionChange);
+    els.selectAllTickets.addEventListener("change", handleSelectAllTickets);
+    els.bulkDeleteBtn.addEventListener("click", deleteSelectedTickets);
+    els.resetConfirmationsBtn.addEventListener("click", resetHiddenConfirmations);
     els.exportCsvBtn.addEventListener("click", exportCsv);
     els.resetBtn.addEventListener("click", resetAllData);
 
@@ -236,6 +337,7 @@
           confirmText: "OK",
           showCancel: false,
           variant: "warning",
+          preferenceKey: DIALOG_KEYS.TICKET_LIMIT,
         });
       }
 
@@ -292,6 +394,7 @@
         confirmText: "OK",
         showCancel: false,
         variant: "warning",
+        preferenceKey: DIALOG_KEYS.TICKET_LIMIT,
       });
       return;
     }
@@ -355,20 +458,93 @@
       cancelText: "Abbrechen",
       showCancel: true,
       variant: "danger",
+      preferenceKey: DIALOG_KEYS.TICKET_DELETE,
     });
 
     if (!confirmed) return;
 
-    state.tickets = state.tickets.filter((item) => item.id !== id);
+    const result = removeTicketsByIds([id]);
+    if (!result.saved) return;
 
-    if (state.editingId === id) {
+    renderApp();
+
+    if (result.deletedCount > 0) {
+      showToast("Ticket gelöscht.", "success");
+    } else {
+      showToast("Ticket nicht mehr vorhanden.", "warning");
+    }
+  }
+
+  async function deleteSelectedTickets() {
+    const selectedTickets = getSelectedTickets();
+
+    if (selectedTickets.length === 0) {
+      clearSelectedTickets();
+      renderApp();
+      showToast("Keine Tickets ausgewählt.", "warning");
+      return;
+    }
+
+    const selectedLabel = formatSelectedTicketCount(selectedTickets.length);
+    const confirmed = await openDialog({
+      title: "Ausgewählte Tickets löschen",
+      message: `Möchtest du wirklich ${selectedLabel} löschen?`,
+      confirmText: "Löschen",
+      cancelText: "Abbrechen",
+      showCancel: true,
+      variant: "danger",
+      preferenceKey: DIALOG_KEYS.BULK_TICKET_DELETE,
+    });
+
+    if (!confirmed) return;
+
+    const currentSelectedIds = getExistingSelectedTicketIds();
+    if (currentSelectedIds.length === 0) {
+      clearSelectedTickets();
+      renderApp();
+      showToast("Ausgewählte Tickets nicht mehr vorhanden.", "warning");
+      return;
+    }
+
+    const result = removeTicketsByIds(currentSelectedIds);
+    if (!result.saved) return;
+
+    clearSelectedTickets();
+    renderApp();
+
+    if (result.deletedCount > 0) {
+      showToast(`${formatTicketCount(result.deletedCount)} gelöscht.`, "success");
+    } else {
+      showToast("Ausgewählte Tickets nicht mehr vorhanden.", "warning");
+    }
+  }
+
+  function removeTicketsByIds(ids) {
+    const existingIds = new Set(state.tickets.map((ticket) => ticket.id));
+    const targetIds = new Set(Array.from(ids).filter((id) => existingIds.has(id)));
+
+    if (targetIds.size === 0) {
+      return { deletedCount: 0, saved: true };
+    }
+
+    const previousTickets = state.tickets;
+    const nextTickets = previousTickets.filter((ticket) => !targetIds.has(ticket.id));
+    const deletedCount = previousTickets.length - nextTickets.length;
+
+    state.tickets = nextTickets;
+
+    if (!saveData()) {
+      state.tickets = previousTickets;
+      return { deletedCount: 0, saved: false };
+    }
+
+    targetIds.forEach((id) => state.selectedTicketIds.delete(id));
+
+    if (state.editingId && targetIds.has(state.editingId)) {
       clearForm();
     }
 
-    if (!saveData()) return;
-
-    renderApp();
-    showToast("Ticket gelöscht.", "success");
+    return { deletedCount, saved: true };
   }
 
   function startEditTicket(id) {
@@ -409,6 +585,47 @@
     if (action === "delete") deleteTicket(id);
   }
 
+  function handleTableSelectionChange(event) {
+    const checkbox = event.target.closest("input[data-select-ticket]");
+    if (!checkbox || !els.tableBody.contains(checkbox)) return;
+
+    const id = checkbox.dataset.id;
+    if (!state.tickets.some((ticket) => ticket.id === id)) {
+      state.selectedTicketIds.delete(id);
+      renderTable();
+      showToast("Ticket nicht mehr vorhanden.", "warning");
+      return;
+    }
+
+    if (checkbox.checked) {
+      state.selectedTicketIds.add(id);
+    } else {
+      state.selectedTicketIds.delete(id);
+    }
+
+    const row = checkbox.closest("tr");
+    if (row) {
+      row.classList.toggle("row-selected", checkbox.checked);
+    }
+
+    updateSelectionUi();
+  }
+
+  function handleSelectAllTickets() {
+    const visibleTickets = getFilteredTickets();
+    const shouldSelect = els.selectAllTickets.checked;
+
+    visibleTickets.forEach((ticket) => {
+      if (shouldSelect) {
+        state.selectedTicketIds.add(ticket.id);
+      } else {
+        state.selectedTicketIds.delete(ticket.id);
+      }
+    });
+
+    renderTable();
+  }
+
   function generateTicketNumber(type) {
     const safeType = isValidType(type) ? type : "normal";
     const prefix = safeType === "vip" ? "VIP" : "N";
@@ -427,6 +644,7 @@
   }
 
   function renderApp() {
+    syncSelectedTickets();
     renderTable();
     updateStats();
     updateLimitState();
@@ -440,10 +658,11 @@
       const row = document.createElement("tr");
       row.className = "empty-row";
       const cell = document.createElement("td");
-      cell.colSpan = 7;
+      cell.colSpan = 8;
       cell.textContent = "Keine Einträge";
       row.append(cell);
       els.tableBody.append(row);
+      updateSelectionUi();
       return;
     }
 
@@ -451,23 +670,49 @@
 
     tickets.forEach((ticket) => {
       const row = document.createElement("tr");
+      row.dataset.id = ticket.id;
+      row.classList.toggle("row-selected", state.selectedTicketIds.has(ticket.id));
       row.append(
-        createTextCell(ticket.ticketNumber, "ticket-number"),
-        createTextCell(ticket.firstName),
-        createTextCell(ticket.lastName),
-        createTextCell(ticket.phone),
-        createBadgeCell(ticket.type),
-        createTextCell(formatCurrency(ticket.price)),
+        createSelectCell(ticket),
+        createTextCell(ticket.ticketNumber, "ticket-number", "Ticketnummer"),
+        createTextCell(ticket.firstName, "", "Vorname"),
+        createTextCell(ticket.lastName, "", "Nachname"),
+        createTextCell(ticket.phone, "", "Telefonnummer"),
+        createBadgeCell(ticket.type, "Tickettyp"),
+        createTextCell(formatCurrency(ticket.price), "", "Preis"),
         createActionCell(ticket.id),
       );
       fragment.append(row);
     });
 
     els.tableBody.append(fragment);
+    updateSelectionUi();
   }
 
-  function createTextCell(text, className = "") {
+  function createSelectCell(ticket) {
     const cell = document.createElement("td");
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    const visual = document.createElement("span");
+
+    cell.className = "select-cell";
+    label.className = "ticket-select";
+    input.type = "checkbox";
+    input.dataset.selectTicket = "true";
+    input.dataset.id = ticket.id;
+    input.checked = state.selectedTicketIds.has(ticket.id);
+    input.setAttribute("aria-label", `Ticket ${ticket.ticketNumber} auswählen`);
+    visual.className = "check-visual";
+    visual.setAttribute("aria-hidden", "true");
+
+    label.append(input, visual);
+    cell.append(label);
+    return cell;
+  }
+
+  function createTextCell(text, className = "", label = "") {
+    const cell = document.createElement("td");
+    if (label) cell.dataset.label = label;
 
     if (className) {
       const span = document.createElement("span");
@@ -481,10 +726,11 @@
     return cell;
   }
 
-  function createBadgeCell(type) {
+  function createBadgeCell(type, label = "") {
     const cell = document.createElement("td");
     const badge = document.createElement("span");
     const safeType = isValidType(type) ? type : "normal";
+    if (label) cell.dataset.label = label;
 
     badge.className = `badge ${safeType === "vip" ? "badge-vip" : "badge-normal"}`;
     badge.textContent = TYPE_LABELS[safeType];
@@ -495,26 +741,128 @@
   function createActionCell(id) {
     const cell = document.createElement("td");
     const wrapper = document.createElement("div");
-    const editButton = document.createElement("button");
-    const deleteButton = document.createElement("button");
+    const editButton = createActionButton({
+      action: "edit",
+      id,
+      label: "Bearbeiten",
+      icon: "edit",
+      className: "edit",
+    });
+    const deleteButton = createActionButton({
+      action: "delete",
+      id,
+      label: "Löschen",
+      icon: "trash",
+      className: "delete",
+    });
 
     wrapper.className = "action-cell";
-
-    editButton.className = "action-btn";
-    editButton.type = "button";
-    editButton.dataset.action = "edit";
-    editButton.dataset.id = id;
-    editButton.textContent = "Bearbeiten";
-
-    deleteButton.className = "action-btn delete";
-    deleteButton.type = "button";
-    deleteButton.dataset.action = "delete";
-    deleteButton.dataset.id = id;
-    deleteButton.textContent = "Löschen";
+    cell.dataset.label = "Aktionen";
 
     wrapper.append(editButton, deleteButton);
     cell.append(wrapper);
     return cell;
+  }
+
+  function createActionButton({ action, id, label, icon, className = "" }) {
+    const button = document.createElement("button");
+
+    button.className = `action-btn icon-action ${className}`.trim();
+    button.type = "button";
+    button.dataset.action = action;
+    button.dataset.id = id;
+    button.dataset.tooltip = label;
+    button.setAttribute("aria-label", label);
+
+    button.append(createActionIcon(icon));
+    return button;
+  }
+
+  function createActionIcon(name) {
+    const svgNamespace = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNamespace, "svg");
+    const paths = name === "trash"
+      ? [
+          "M5 7h14",
+          "M9 7V5h6v2",
+          "M7 7l1 13h8l1-13",
+          "M10 11v5",
+          "M14 11v5",
+        ]
+      : [
+          "M4 20h4.5L19 9.5 14.5 5 4 15.5V20z",
+          "M13.5 6 18 10.5",
+        ];
+
+    svg.setAttribute("class", "action-icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+
+    paths.forEach((pathData) => {
+      const path = document.createElementNS(svgNamespace, "path");
+      path.setAttribute("d", pathData);
+      svg.append(path);
+    });
+
+    return svg;
+  }
+
+  function updateSelectionUi() {
+    syncSelectedTickets();
+
+    const selectedCount = state.selectedTicketIds.size;
+    els.selectionBar.hidden = selectedCount === 0;
+    els.bulkDeleteBtn.disabled = selectedCount === 0;
+    els.selectionCount.textContent = selectedCount === 1
+      ? "1 Ticket ausgewählt"
+      : `${selectedCount} Tickets ausgewählt`;
+
+    updateSelectAllState();
+  }
+
+  function updateSelectAllState() {
+    const visibleTickets = getFilteredTickets();
+    const visibleCount = visibleTickets.length;
+    const selectedVisibleCount = visibleTickets.filter((ticket) => state.selectedTicketIds.has(ticket.id)).length;
+
+    els.selectAllTickets.disabled = visibleCount === 0;
+    els.selectAllTickets.checked = visibleCount > 0 && selectedVisibleCount === visibleCount;
+    els.selectAllTickets.indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleCount;
+  }
+
+  function syncSelectedTickets() {
+    const existingIds = new Set(state.tickets.map((ticket) => ticket.id));
+    state.selectedTicketIds.forEach((id) => {
+      if (!existingIds.has(id)) {
+        state.selectedTicketIds.delete(id);
+      }
+    });
+  }
+
+  function clearSelectedTickets() {
+    state.selectedTicketIds.clear();
+  }
+
+  function getSelectedTickets() {
+    return state.tickets.filter((ticket) => state.selectedTicketIds.has(ticket.id));
+  }
+
+  function getExistingSelectedTicketIds() {
+    return getSelectedTickets().map((ticket) => ticket.id);
+  }
+
+  function formatSelectedTicketCount(count) {
+    return count === 1 ? "1 ausgewähltes Ticket" : `${count} ausgewählte Tickets`;
+  }
+
+  function formatTicketCount(count) {
+    return count === 1 ? "1 Ticket" : `${count} Tickets`;
   }
 
   function getFilteredTickets() {
@@ -646,6 +994,23 @@
     return `"${safeText.replaceAll('"', '""')}"`;
   }
 
+  function resetHiddenConfirmations() {
+    if (!hasSuppressedDialogs()) {
+      showToast("Keine ausgeblendeten Bestätigungsdialoge.", "info");
+      return;
+    }
+
+    const previousSuppressedConfirmations = { ...state.preferences.suppressedConfirmations };
+    state.preferences.suppressedConfirmations = {};
+
+    if (!saveData()) {
+      state.preferences.suppressedConfirmations = previousSuppressedConfirmations;
+      return;
+    }
+
+    showToast("Bestätigungsdialoge zurückgesetzt.", "success");
+  }
+
   async function resetAllData() {
     if (state.tickets.length === 0) {
       showToast("Keine Daten vorhanden.", "info");
@@ -659,14 +1024,27 @@
       cancelText: "Abbrechen",
       showCancel: true,
       variant: "danger",
+      preferenceKey: DIALOG_KEYS.DATA_RESET,
     });
 
     if (!confirmed) return;
 
+    const previousTickets = state.tickets;
+    const previousCounters = { ...state.counters };
+    const previousSelectedTicketIds = new Set(state.selectedTicketIds);
     state.tickets = [];
     state.counters = { normal: 1, vip: 1 };
+    clearSelectedTickets();
+
+    if (!saveData()) {
+      state.tickets = previousTickets;
+      state.counters = previousCounters;
+      state.selectedTicketIds = previousSelectedTicketIds;
+      renderApp();
+      return;
+    }
+
     clearForm();
-    saveData();
     renderApp();
     showToast("Daten zurückgesetzt.", "success");
   }
@@ -678,7 +1056,13 @@
     cancelText = "Abbrechen",
     showCancel = false,
     variant = "info",
+    preferenceKey = "",
   } = {}) {
+    const canRememberDialog = isKnownDialogKey(preferenceKey);
+    if (canRememberDialog && isDialogSuppressed(preferenceKey)) {
+      return Promise.resolve(true);
+    }
+
     closeDialog(false, { silent: true });
 
     els.dialogTitle.textContent = String(title).slice(0, 80);
@@ -686,6 +1070,9 @@
     els.dialogConfirmBtn.textContent = String(confirmText).slice(0, 30);
     els.dialogCancelBtn.textContent = String(cancelText).slice(0, 30);
     els.dialogCancelBtn.hidden = !showCancel;
+    els.dialogSkipRow.hidden = !canRememberDialog;
+    els.dialogSkipCheckbox.checked = false;
+    els.dialogSkipCheckbox.disabled = !canRememberDialog;
     els.dialogConfirmBtn.className = variant === "danger"
       ? "btn btn-danger-filled"
       : "btn btn-primary";
@@ -693,6 +1080,7 @@
     return new Promise((resolve) => {
       state.dialogResolve = resolve;
       state.dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      state.dialogPreferenceKey = canRememberDialog ? preferenceKey : "";
       els.dialogBackdrop.hidden = false;
       document.body.classList.add("modal-open");
 
@@ -708,8 +1096,13 @@
 
     const resolver = state.dialogResolve;
     const returnFocus = state.dialogReturnFocus;
+    const preferenceKey = state.dialogPreferenceKey;
+    const shouldSuppress = Boolean(result && preferenceKey && els.dialogSkipCheckbox.checked);
     state.dialogResolve = null;
     state.dialogReturnFocus = null;
+    state.dialogPreferenceKey = "";
+    els.dialogSkipCheckbox.checked = false;
+    els.dialogSkipCheckbox.disabled = true;
     els.dialogBackdrop.classList.remove("open");
     document.body.classList.remove("modal-open");
 
@@ -724,6 +1117,10 @@
     }
 
     if (resolver && !options.silent) {
+      if (shouldSuppress) {
+        suppressDialog(preferenceKey);
+      }
+
       resolver(result);
     }
   }
@@ -743,7 +1140,9 @@
   }
 
   function trapDialogFocus(event) {
-    const focusable = Array.from(els.dialogCard.querySelectorAll("button:not([hidden]):not(:disabled)"));
+    const focusable = Array.from(
+      els.dialogCard.querySelectorAll("button:not([hidden]):not(:disabled), input:not(:disabled)"),
+    ).filter((element) => element.offsetParent !== null);
     if (focusable.length === 0) return;
 
     const first = focusable[0];
@@ -762,11 +1161,47 @@
     return !els.dialogBackdrop.hidden && els.dialogBackdrop.classList.contains("open");
   }
 
+  function createDefaultPreferences() {
+    return {
+      suppressedConfirmations: {},
+    };
+  }
+
+  function isKnownDialogKey(key) {
+    return DIALOG_KEY_SET.has(key);
+  }
+
+  function isDialogSuppressed(key) {
+    return Boolean(isKnownDialogKey(key) && state.preferences.suppressedConfirmations[key]);
+  }
+
+  function suppressDialog(key) {
+    if (!isKnownDialogKey(key)) return;
+
+    const wasSuppressed = Boolean(state.preferences.suppressedConfirmations[key]);
+    state.preferences.suppressedConfirmations[key] = true;
+
+    if (!saveData()) {
+      if (wasSuppressed) {
+        state.preferences.suppressedConfirmations[key] = true;
+      } else {
+        delete state.preferences.suppressedConfirmations[key];
+      }
+    }
+  }
+
+  function hasSuppressedDialogs() {
+    return Object.keys(state.preferences.suppressedConfirmations).some((key) => (
+      isKnownDialogKey(key) && state.preferences.suppressedConfirmations[key]
+    ));
+  }
+
   function saveData() {
     const data = {
       version: 3,
       tickets: state.tickets.map(sanitizeTicketForStorage),
       counters: sanitizeCounters(state.counters),
+      preferences: sanitizePreferences(state.preferences),
     };
 
     if (safeStorageSet(localStorage, STORAGE_KEY, JSON.stringify(data))) {
@@ -796,10 +1231,12 @@
 
       state.tickets = tickets;
       state.counters = mergeCounters(counters, deriveCountersFromTickets(tickets));
+      state.preferences = sanitizePreferences(parsed.preferences);
       saveData();
     } catch {
       state.tickets = [];
       state.counters = { normal: 1, vip: 1 };
+      state.preferences = createDefaultPreferences();
     }
   }
 
@@ -939,6 +1376,23 @@
       normal: Math.max(1, parseSafeInteger(counters?.normal) || 1),
       vip: Math.max(1, parseSafeInteger(counters?.vip) || 1),
     };
+  }
+
+  function sanitizePreferences(preferences) {
+    const safePreferences = createDefaultPreferences();
+    const suppressed = preferences?.suppressedConfirmations;
+
+    if (!suppressed || typeof suppressed !== "object" || Array.isArray(suppressed)) {
+      return safePreferences;
+    }
+
+    Object.keys(suppressed).forEach((key) => {
+      if (isKnownDialogKey(key) && suppressed[key] === true) {
+        safePreferences.suppressedConfirmations[key] = true;
+      }
+    });
+
+    return safePreferences;
   }
 
   function normalizeStoredId(value) {

@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; upgrade-insecure-requests">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types default; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.05.06.11">
+  <meta name="app-version" content="2026.05.07.09">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="icon.svg?v=2026.05.06.11" type="image/svg+xml">
-  <link rel="stylesheet" href="style.css?v=2026.05.06.11">
-  <script src="app.js?v=2026.05.06.11" defer></script>
+  <link rel="icon" href="icon.svg?v=2026.05.07.09" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css?v=2026.05.07.09">
+  <script src="app.js?v=2026.05.07.09" defer></script>
 </head>
 <body>
   <main class="app-shell">
@@ -124,10 +124,33 @@
           </label>
         </div>
 
+        <div class="selection-bar" id="selectionBar" hidden>
+          <span id="selectionCount">0 Tickets ausgewählt</span>
+          <button class="btn btn-danger" id="bulkDeleteBtn" type="button">Ausgewählte Tickets löschen</button>
+        </div>
+
         <div class="table-wrap">
           <table>
+            <colgroup>
+              <col class="col-select">
+              <col class="col-ticket">
+              <col class="col-name">
+              <col class="col-name">
+              <col class="col-phone">
+              <col class="col-type">
+              <col class="col-price">
+              <col class="col-actions">
+            </colgroup>
             <thead>
               <tr>
+                <th class="select-column">
+                  <label class="ticket-select ticket-select-all">
+                    <input id="selectAllTickets" type="checkbox">
+                    <span class="check-visual" aria-hidden="true"></span>
+                    <span class="sr-only">Alle sichtbaren Tickets auswählen</span>
+                    <span class="select-all-label" aria-hidden="true">Alle sichtbaren Tickets auswählen</span>
+                  </label>
+                </th>
                 <th>Ticketnummer</th>
                 <th>Vorname</th>
                 <th>Nachname</th>
@@ -139,6 +162,14 @@
             </thead>
             <tbody id="ticketTableBody"></tbody>
           </table>
+        </div>
+
+        <div class="table-options" aria-label="Dialoge und Hinweise">
+          <div class="table-options-copy">
+            <strong>Dialoge / Hinweise</strong>
+            <span>Ausgeblendete Bestätigungen wieder anzeigen.</span>
+          </div>
+          <button class="btn btn-soft btn-small" id="resetConfirmationsBtn" type="button">Bestätigungsdialoge zurücksetzen</button>
         </div>
       </section>
     </section>
@@ -153,6 +184,11 @@
     <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dialogTitle" aria-describedby="dialogMessage" tabindex="-1">
       <h2 id="dialogTitle">Hinweis</h2>
       <p id="dialogMessage">Aktion bestätigen.</p>
+      <label class="dialog-opt-out" id="dialogSkipRow">
+        <input id="dialogSkipCheckbox" type="checkbox">
+        <span class="check-visual" aria-hidden="true"></span>
+        <span>Nicht erneut anzeigen</span>
+      </label>
       <div class="modal-actions">
         <button class="btn btn-soft" id="dialogCancelBtn" type="button">Abbrechen</button>
         <button class="btn btn-primary" id="dialogConfirmBtn" type="button">OK</button>
