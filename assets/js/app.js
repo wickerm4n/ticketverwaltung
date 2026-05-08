@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.11";
+  const APP_VERSION = "2026.05.08.12";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
@@ -429,6 +429,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
     document.addEventListener("keydown", handleGlobalKeydown);
     window.addEventListener("hashchange", handleShareHashChange);
+    window.addEventListener("pagehide", persistCurrentDataBeforeUnload);
   }
 
   async function handleFormSubmit(event) {
@@ -2348,9 +2349,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   function saveData() {
     const data = createPersistedData();
-    const saved = state.remote.listId
-      ? saveSharedData(state.remote.listId, data)
-      : saveLocalData(data);
+    const saved = saveCurrentDataSnapshot(data);
 
     if (!saved) {
       showToast("Speichern fehlgeschlagen.", "danger");
@@ -2362,6 +2361,22 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     return true;
+  }
+
+  function saveCurrentDataSnapshot(data = createPersistedData()) {
+    const localSaved = state.remote.openedFromShareLink ? true : saveLocalData(data);
+    const sharedSaved = state.remote.listId ? saveSharedData(state.remote.listId, data) : true;
+    return localSaved && sharedSaved;
+  }
+
+  function persistCurrentDataBeforeUnload() {
+    const data = createPersistedData();
+    saveCurrentDataSnapshot(data);
+
+    if (canWriteRemoteList() && !state.remote.applyingRemote) {
+      window.clearTimeout(state.remote.saveTimer);
+      void writeRemoteStateNow();
+    }
   }
 
   function createPersistedData() {
