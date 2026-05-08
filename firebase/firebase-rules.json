@@ -1,0 +1,56 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "lists": {
+      "$listId": {
+        ".read": "auth != null && (data.child('meta').child('ownerUid').val() == auth.uid || root.child('members').child($listId).child(auth.uid).exists())",
+        ".write": "auth != null && ((!data.exists() && newData.child('meta').child('ownerUid').val() == auth.uid) || data.child('meta').child('ownerUid').val() == auth.uid || root.child('members').child($listId).child(auth.uid).child('canWrite').val() == true)",
+        "meta": {
+          "ownerUid": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "appVersion": {
+            ".validate": "newData.isString() && newData.val().length <= 64"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "revision": {
+            ".validate": "newData.isNumber()"
+          },
+          "$other": {
+            ".validate": true
+          }
+        },
+        "state": {
+          ".validate": true
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "tokens": {
+      "$listId": {
+        ".read": false,
+        "$token": {
+          ".write": "auth != null && (root.child('lists').child($listId).child('meta').child('ownerUid').val() == auth.uid || root.child('members').child($listId).child(auth.uid).child('role').val() == 'owner')",
+          ".validate": "newData.hasChildren(['role', 'canWrite', 'createdAt']) && (newData.child('role').val() == 'reader' || newData.child('role').val() == 'editor') && newData.child('canWrite').isBoolean() && newData.child('createdAt').isNumber() && ((newData.child('role').val() == 'reader' && newData.child('canWrite').val() == false) || (newData.child('role').val() == 'editor' && newData.child('canWrite').val() == true))"
+        }
+      }
+    },
+    "members": {
+      "$listId": {
+        "$uid": {
+          ".read": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && auth.uid == $uid && ((root.child('lists').child($listId).child('meta').child('ownerUid').val() == auth.uid && newData.child('role').val() == 'owner' && newData.child('canWrite').val() == true) || (root.child('tokens').child($listId).child(newData.child('token').val()).child('role').val() == newData.child('role').val() && root.child('tokens').child($listId).child(newData.child('token').val()).child('canWrite').val() == newData.child('canWrite').val()))",
+          ".validate": "newData.hasChildren(['role', 'canWrite', 'joinedAt']) && newData.child('role').isString() && newData.child('canWrite').isBoolean() && newData.child('joinedAt').isNumber()"
+        }
+      }
+    }
+  }
+}
