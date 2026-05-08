@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.10";
+  const APP_VERSION = "2026.05.08.11";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
@@ -428,6 +428,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     });
 
     document.addEventListener("keydown", handleGlobalKeydown);
+    window.addEventListener("hashchange", handleShareHashChange);
   }
 
   async function handleFormSubmit(event) {
@@ -1763,6 +1764,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       token: "",
       readToken: "",
       editToken: "",
+      shareKey: "",
       role: "local",
       canWrite: true,
       openedFromShareLink: false,
@@ -1857,10 +1859,31 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     return { listId, token, role };
   }
 
+  function getShareKey({ listId, token, role } = {}) {
+    return listId && token ? `${listId}:${token}:${role || SHARE_ROLE_READ}` : "";
+  }
+
+  async function handleShareHashChange() {
+    const shareParams = getShareParamsFromUrl();
+    if (!shareParams) {
+      if (state.remote.openedFromShareLink) {
+        state.remote.openedFromShareLink = false;
+        state.remote.shareKey = "";
+        updateAccessUi();
+      }
+      return;
+    }
+
+    const shareKey = getShareKey(shareParams);
+    if (shareKey && shareKey === state.remote.shareKey) return;
+    await joinSharedListFromUrl(shareParams);
+  }
+
   async function joinSharedListFromUrl({ listId, token, role }) {
     if (!(await ensureFirebaseReady())) return;
 
     const canWrite = role === SHARE_ROLE_EDIT;
+    const shareKey = getShareKey({ listId, token, role });
     const uid = state.remote.user.uid;
     const memberData = createMemberData({ role, canWrite, token, joinedAt: Date.now() });
 
@@ -1872,8 +1895,9 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
       state.remote.canWrite = isOwner || canWrite;
       state.remote.openedFromShareLink = true;
-      if (role === SHARE_ROLE_READ) state.remote.readToken = token;
-      if (role === SHARE_ROLE_EDIT) state.remote.editToken = token;
+      state.remote.shareKey = shareKey;
+      state.remote.readToken = role === SHARE_ROLE_READ ? token : "";
+      state.remote.editToken = role === SHARE_ROLE_EDIT ? token : "";
       subscribeToSharedList(listId);
       replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read");
       showToast(state.remote.canWrite ? "Editierbarer Share-Link geöffnet." : "Read-only-Share-Link geöffnet.", "success");
@@ -1965,6 +1989,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.readToken = readToken;
       state.remote.editToken = editToken;
       state.remote.token = editToken;
+      state.remote.shareKey = "";
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
       state.remote.openedFromShareLink = false;
@@ -2092,10 +2117,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   function getShareStatusText() {
     if (!state.remote.openedFromShareLink || !state.remote.listId) return "";
     if (state.remote.role === SHARE_ROLE_OWNER) {
-      return "Share-Link · Besitzer/Bearbeiten";
+      return "Geteilte Liste: Besitzerzugriff";
     }
-    if (state.remote.canWrite) return "Share-Link · Bearbeiten";
-    return "Share-Link · Nur lesen";
+    if (state.remote.canWrite) return "Geteilte Liste: Bearbeiten erlaubt";
+    return "Geteilte Liste: Nur ansehen";
   }
 
   function canManageShareLinks() {
