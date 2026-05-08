@@ -29,3 +29,4 @@ https://wickerm4n.github.io/ticketverwaltung/
 - **Editierbar:** andere Personen können Tickets hinzufügen, bearbeiten und löschen.
 
 Geteilte Ticketlisten sind nur für Personen bestimmt, die den jeweiligen Share-Link erhalten haben.
+Wenn du die App später im selben Browser wieder öffnest, arbeitet sie mit derselben geteilten Liste weiter.
