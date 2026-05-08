@@ -890,7 +890,7 @@ tbody tr:last-child td {
   position: fixed;
   top: clamp(14px, 2.4vw, 28px);
   right: clamp(14px, 2.4vw, 28px);
-  z-index: 90;
+  z-index: 160;
   display: grid;
   grid-template-columns: 5px minmax(0, 1fr);
   align-items: center;
@@ -1573,7 +1573,7 @@ tbody tr:last-child td {
 /* Firebase Share-/Freigabe-Funktion */
 .share-status {
   margin: 8px 0 0;
-  display: inline-flex;
+  display: none;
   align-items: center;
   min-height: 30px;
   padding: 6px 12px;
@@ -1586,13 +1586,17 @@ tbody tr:last-child td {
   line-height: 1.2;
 }
 
-body.shared-mode .share-status {
+body.share-link-mode .share-status {
+  display: inline-flex;
+}
+
+body.share-link-mode.shared-mode .share-status {
   color: #edfff8;
   background: rgba(19, 165, 111, 0.15);
   border-color: rgba(140, 240, 197, 0.32);
 }
 
-body.read-only-mode .share-status {
+body.share-link-mode.read-only-mode .share-status {
   color: #fff7dc;
   background: rgba(255, 211, 110, 0.14);
   border-color: rgba(255, 211, 110, 0.32);

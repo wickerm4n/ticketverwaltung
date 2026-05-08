@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.08";
+  const APP_VERSION = "2026.05.08.10";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
@@ -2055,9 +2055,11 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   function updateAccessUi() {
     const shared = Boolean(state.remote.listId);
     const readOnly = shared && !state.remote.canWrite;
+    const shareLinkMode = Boolean(state.remote.openedFromShareLink && state.remote.listId);
 
     document.body.classList.toggle("shared-mode", shared);
     document.body.classList.toggle("read-only-mode", readOnly);
+    document.body.classList.toggle("share-link-mode", shareLinkMode);
 
     const formControls = els.form?.querySelectorAll("input, select, button") || [];
     formControls.forEach((control) => {
