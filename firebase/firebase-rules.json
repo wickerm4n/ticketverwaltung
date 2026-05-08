@@ -127,7 +127,7 @@
     },
     "tokens": {
       "$listId": {
-        ".read": false,
+        ".read": "auth != null && $listId.matches(/^lst_[A-Za-z0-9_-]{18}$/) && root.child('lists').child($listId).child('meta').child('ownerUid').val() == auth.uid",
         ".write": "auth != null && $listId.matches(/^lst_[A-Za-z0-9_-]{18}$/) && root.child('lists').child($listId).child('meta').child('ownerUid').val() == auth.uid",
         "$token": {
           ".validate": "$token.matches(/^(ro|ed)_[A-Za-z0-9_-]{24}$/) && newData.hasChildren(['role', 'canWrite', 'createdAt']) && (newData.child('role').val() == 'reader' || newData.child('role').val() == 'editor') && newData.child('canWrite').isBoolean() && newData.child('createdAt').isNumber() && newData.child('createdAt').val() > 0 && ((newData.child('role').val() == 'reader' && newData.child('canWrite').val() == false) || (newData.child('role').val() == 'editor' && newData.child('canWrite').val() == true))",

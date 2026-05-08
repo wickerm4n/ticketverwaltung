@@ -28,3 +28,4 @@ https://wickerm4n.github.io/ticketverwaltung/
 
 Die Share-Links sind nur für Personen gedacht, denen du den Link bewusst gibst.
 Als Besitzer kannst du alte Share-Links über **Links erneuern** ungültig machen und neue Links erzeugen.
+Wenn du die App später im selben Browser wieder öffnest, arbeitet sie mit derselben geteilten Liste weiter.

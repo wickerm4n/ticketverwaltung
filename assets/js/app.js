@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.13";
+  const APP_VERSION = "2026.05.08.14";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -20,6 +20,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   const STORAGE_KEY = "eventTicketManagerData.v3";
   const LEGACY_REMOTE_SESSION_STORAGE_KEY = "eventTicketManagerRemote.v1";
+  const OWNER_SESSION_STORAGE_KEY = "eventTicketManagerOwnerRemote.v1";
   const SHARED_STORAGE_PREFIX = "eventTicketManagerSharedData.v1:";
   const LEGACY_STORAGE_KEYS = ["eventTicketManagerData.v2", "eventTicketManagerData.v1"];
   const MAX_TICKETS = 250;
@@ -147,7 +148,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   function init() {
     rememberCurrentAppVersion();
-    clearLegacyRemoteSession();
+    migrateLegacyRemoteSession();
 
     loadData();
     bindEvents();
@@ -368,8 +369,54 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
   }
 
-  function clearLegacyRemoteSession() {
+  function migrateLegacyRemoteSession() {
+    const rawSession = safeStorageGet(localStorage, LEGACY_REMOTE_SESSION_STORAGE_KEY, 4096);
+
+    if (rawSession) {
+      try {
+        const parsed = JSON.parse(rawSession);
+        const listId = sanitizeShareToken(parsed?.listId, 128);
+        const authUid = sanitizeAuthUid(parsed?.authUid);
+        if (listId && authUid && parsed?.role === SHARE_ROLE_OWNER) {
+          saveOwnerRemoteSession({ listId, authUid });
+        }
+      } catch {
+        // Alte Sitzungsdaten sind optional und werden bei Fehlern verworfen.
+      }
+    }
+
     safeStorageRemove(localStorage, LEGACY_REMOTE_SESSION_STORAGE_KEY);
+  }
+
+  function saveOwnerRemoteSession({ listId, authUid }) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    const safeAuthUid = sanitizeAuthUid(authUid);
+    if (!safeListId || !safeAuthUid) return false;
+
+    return safeStorageSet(localStorage, OWNER_SESSION_STORAGE_KEY, JSON.stringify({
+      listId: safeListId,
+      authUid: safeAuthUid,
+      savedAt: Date.now(),
+      appVersion: APP_VERSION,
+    }), 1024);
+  }
+
+  function loadOwnerRemoteSession() {
+    const rawSession = safeStorageGet(localStorage, OWNER_SESSION_STORAGE_KEY, 1024);
+    if (!rawSession) return null;
+
+    try {
+      const parsed = JSON.parse(rawSession);
+      const listId = sanitizeShareToken(parsed?.listId, 128);
+      const authUid = sanitizeAuthUid(parsed?.authUid);
+      return listId && authUid ? { listId, authUid } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function clearOwnerRemoteSession() {
+    safeStorageRemove(localStorage, OWNER_SESSION_STORAGE_KEY);
   }
 
   function bindEvents() {
@@ -1813,11 +1860,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       if (shareParams) {
         await joinSharedListFromUrl(shareParams);
       } else {
-        // Ein normaler Aufruf der Basis-URL darf niemals automatisch wieder
-        // eine zuvor geöffnete Share-Liste laden. Geteilte Listen werden nur
-        // geöffnet, wenn der aktuelle Link echte Share-Parameter enthält.
-        clearLegacyRemoteSession();
-        updateAccessUi();
+        const restoredOwnerList = await restoreOwnedSharedListFromLocalSession();
+        if (!restoredOwnerList) {
+          updateAccessUi();
+        }
       }
     } catch (error) {
       console.error("Firebase-Initialisierung fehlgeschlagen:", error);
@@ -1903,14 +1949,20 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     try {
       await dbSet(dbRef(state.remote.db, `members/${listId}/${uid}`), memberData);
       const isOwner = await isCurrentUserListOwner(listId, uid);
+      const ownerTokens = isOwner ? await loadShareTokensForOwner(listId) : null;
+      const readToken = ownerTokens?.readToken || (role === SHARE_ROLE_READ ? token : "");
+      const editToken = ownerTokens?.editToken || (role === SHARE_ROLE_EDIT ? token : "");
       state.remote.listId = listId;
-      state.remote.token = token;
+      state.remote.token = isOwner ? (editToken || token) : token;
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
       state.remote.canWrite = isOwner || canWrite;
       state.remote.openedFromShareLink = true;
       state.remote.shareKey = shareKey;
-      state.remote.readToken = role === SHARE_ROLE_READ ? token : "";
-      state.remote.editToken = role === SHARE_ROLE_EDIT ? token : "";
+      state.remote.readToken = readToken;
+      state.remote.editToken = editToken;
+      if (isOwner) {
+        saveOwnerRemoteSession({ listId, authUid: uid });
+      }
       subscribeToSharedList(listId);
       replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read");
       showToast(state.remote.canWrite ? "Editierbarer Share-Link geöffnet." : "Read-only-Share-Link geöffnet.", "success");
@@ -1930,7 +1982,81 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     if (!state.remote.listId) return;
+    if (canManageShareLinks() && (!state.remote.readToken || !state.remote.editToken)) {
+      const tokens = await loadShareTokensForOwner(state.remote.listId);
+      state.remote.readToken = tokens.readToken || state.remote.readToken;
+      state.remote.editToken = tokens.editToken || state.remote.editToken;
+      state.remote.token = state.remote.editToken || state.remote.token;
+    }
     openShareDialog();
+  }
+
+  async function restoreOwnedSharedListFromLocalSession() {
+    const session = loadOwnerRemoteSession();
+    const cachedListIds = loadCachedSharedListIds();
+    if (!session && cachedListIds.length === 0) return false;
+    if (!(await ensureFirebaseReady())) return false;
+
+    const uid = state.remote.user?.uid || "";
+    if (session?.authUid === uid && await connectOwnedSharedList(session.listId, uid)) {
+      return true;
+    }
+
+    if (session && session.authUid !== uid) {
+      clearOwnerRemoteSession();
+    }
+
+    for (const listId of cachedListIds) {
+      if (listId === session?.listId) continue;
+      if (await connectOwnedSharedList(listId, uid)) {
+        return true;
+      }
+    }
+
+    if (session) {
+      clearOwnerRemoteSession();
+    }
+    return false;
+  }
+
+  async function connectOwnedSharedList(listId, uid) {
+    if (!(await isCurrentUserListOwner(listId, uid))) return false;
+
+    const tokens = await loadShareTokensForOwner(listId);
+    state.remote.listId = listId;
+    state.remote.token = tokens.editToken || "";
+    state.remote.readToken = tokens.readToken || "";
+    state.remote.editToken = tokens.editToken || "";
+    state.remote.shareKey = "";
+    state.remote.role = SHARE_ROLE_OWNER;
+    state.remote.canWrite = true;
+    state.remote.openedFromShareLink = false;
+    saveOwnerRemoteSession({ listId, authUid: uid });
+    subscribeToSharedList(listId);
+    updateAccessUi();
+    return true;
+  }
+
+  function loadCachedSharedListIds() {
+    const listIds = [];
+    const seen = new Set();
+
+    try {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index) || "";
+        if (!key.startsWith(SHARED_STORAGE_PREFIX)) continue;
+
+        const listId = sanitizeShareToken(key.slice(SHARED_STORAGE_PREFIX.length), 128);
+        if (listId && !seen.has(listId)) {
+          seen.add(listId);
+          listIds.push(listId);
+        }
+      }
+    } catch {
+      // Storage-Zugriff ist optional; ohne Cache gibt es einfach nichts zu migrieren.
+    }
+
+    return listIds;
   }
 
   function createShareTokenBundle(createdAt = Date.now()) {
@@ -1953,6 +2079,32 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     } catch {
       return false;
     }
+  }
+
+  async function loadShareTokensForOwner(listId) {
+    const tokens = { readToken: "", editToken: "" };
+
+    try {
+      const snapshot = await dbGet(dbRef(state.remote.db, `tokens/${listId}`));
+      const value = snapshot.exists() ? snapshot.val() : null;
+      if (!value || typeof value !== "object") return tokens;
+
+      Object.entries(value).forEach(([token, data]) => {
+        const safeToken = sanitizeShareToken(token, 256);
+        if (!safeToken || !data || typeof data !== "object") return;
+
+        if (data.role === SHARE_ROLE_READ && data.canWrite === false) {
+          tokens.readToken = safeToken;
+        }
+        if (data.role === SHARE_ROLE_EDIT && data.canWrite === true) {
+          tokens.editToken = safeToken;
+        }
+      });
+    } catch (error) {
+      console.error("Share-Tokens konnten nicht geladen werden:", error);
+    }
+
+    return tokens;
   }
 
   function createMemberData({ role, canWrite, token, joinedAt = Date.now() }) {
@@ -2006,6 +2158,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
       state.remote.openedFromShareLink = false;
+      saveOwnerRemoteSession({ listId, authUid: uid });
       subscribeToSharedList(listId);
       showToast("Geteilte Ticketliste erstellt.", "success");
       updateAccessUi();
@@ -2147,6 +2300,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       showToast("Dieser Link kann nicht weiter freigegeben werden.", "warning");
       return;
     }
+    if (!state.remote.readToken && !state.remote.editToken) {
+      showToast("Share-Links konnten nicht geladen werden.", "warning");
+      return;
+    }
 
     const hasReadToken = Boolean(state.remote.readToken);
     const hasEditToken = Boolean(state.remote.editToken) && state.remote.canWrite;
@@ -2245,8 +2402,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.readToken = readToken;
       state.remote.editToken = editToken;
       state.remote.token = editToken;
+      state.remote.shareKey = "";
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
+      saveOwnerRemoteSession({ listId, authUid: uid });
       updateShareDialogLink();
       updateAccessUi();
       showToast("Share-Links erneuert.", "success");
@@ -2350,6 +2509,11 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     const text = String(value || "").trim();
     if (!text || text.length > maxLength) return "";
     return /^[A-Za-z0-9_-]+$/.test(text) ? text : "";
+  }
+
+  function sanitizeAuthUid(value) {
+    const text = String(value || "").trim();
+    return /^[A-Za-z0-9_-]{1,128}$/.test(text) ? text : "";
   }
 
   function showRemoteToast(message, type = "info") {
