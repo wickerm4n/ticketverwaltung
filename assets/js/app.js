@@ -6,15 +6,17 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.12";
+  const APP_VERSION = "2026.05.08.13";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
+  const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
   const VERSION_URL_PARAM = "_appv";
   const VERSION_RELOAD_PARAM = "_reload";
   const VERSION_MANIFEST_PATH = "config/version.json";
   const VERSION_MANIFEST_MAX_LENGTH = 256;
   const REMOTE_VERSION_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+  const VERSION_RELOAD_RETRY_MS = 60 * 1000;
 
   const STORAGE_KEY = "eventTicketManagerData.v3";
   const LEGACY_REMOTE_SESSION_STORAGE_KEY = "eventTicketManagerRemote.v1";
@@ -166,6 +168,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     const guardedVersion = safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_KEY, MAX_VERSION_LENGTH);
     if (guardedVersion === APP_VERSION) {
       safeStorageRemove(sessionStorage, VERSION_RELOAD_GUARD_KEY);
+      safeStorageRemove(sessionStorage, VERSION_RELOAD_GUARD_AT_KEY);
     }
   }
 
@@ -173,6 +176,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     if (!canCheckRemoteVersion()) return;
 
     state.lastRemoteVersionCheckAt = Date.now();
+    void checkRemoteVersion();
 
     window.setInterval(() => {
       void checkRemoteVersion();
@@ -213,10 +217,11 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       const lastRemoteVersion = safeStorageGet(localStorage, VERSION_LAST_REMOTE_KEY, MAX_VERSION_LENGTH);
       const urlVersion = getUrlVersionParam();
 
-      if (guardedVersion === latestVersion || urlVersion === latestVersion) return;
+      if (urlVersion === latestVersion || isVersionReloadGuardActive(guardedVersion, latestVersion)) return;
 
       safeStorageSet(localStorage, VERSION_LAST_REMOTE_KEY, latestVersion);
       safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_KEY, latestVersion);
+      safeStorageSet(sessionStorage, VERSION_RELOAD_GUARD_AT_KEY, String(Date.now()), MAX_VERSION_LENGTH);
 
       if (lastRemoteVersion !== latestVersion) {
         showToast("Neue Version wird geladen.", "info");
@@ -275,6 +280,13 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     } catch {
       return "";
     }
+  }
+
+  function isVersionReloadGuardActive(guardedVersion, latestVersion) {
+    if (guardedVersion !== latestVersion) return false;
+
+    const guardedAt = Number(safeStorageGet(sessionStorage, VERSION_RELOAD_GUARD_AT_KEY, MAX_VERSION_LENGTH));
+    return Number.isFinite(guardedAt) && Date.now() - guardedAt < VERSION_RELOAD_RETRY_MS;
   }
 
   function cleanVersionParamsFromUrl() {
