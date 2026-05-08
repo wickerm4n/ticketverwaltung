@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.14";
+  const APP_VERSION = "2026.05.08.15";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -2296,23 +2296,32 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   function openShareDialog() {
     if (!els.shareDialogBackdrop) return;
 
-    if (!state.remote.canWrite && !state.remote.readToken) {
+    const canManage = canManageShareLinks();
+    const hasReadToken = Boolean(state.remote.readToken);
+    const hasEditToken = Boolean(state.remote.editToken) && state.remote.canWrite;
+    const hasAnyToken = hasReadToken || hasEditToken;
+
+    if (!canManage && !state.remote.canWrite && !state.remote.readToken) {
       showToast("Dieser Link kann nicht weiter freigegeben werden.", "warning");
       return;
     }
-    if (!state.remote.readToken && !state.remote.editToken) {
+    if (!hasAnyToken && !canManage) {
       showToast("Share-Links konnten nicht geladen werden.", "warning");
       return;
     }
 
-    const hasReadToken = Boolean(state.remote.readToken);
-    const hasEditToken = Boolean(state.remote.editToken) && state.remote.canWrite;
-    els.shareModeRead.disabled = !hasReadToken && hasEditToken;
+    els.shareModeRead.disabled = !hasAnyToken || (!hasReadToken && hasEditToken);
     els.shareModeRead.checked = hasReadToken || !hasEditToken;
     els.shareModeEdit.checked = !hasReadToken && hasEditToken;
-    els.shareModeEdit.disabled = !hasEditToken;
+    els.shareModeEdit.disabled = !hasAnyToken || !hasEditToken;
+    if (els.shareLinkInput) {
+      els.shareLinkInput.disabled = !hasAnyToken;
+      els.shareLinkInput.placeholder = hasAnyToken ? "" : "Keine Links geladen";
+    }
+    if (els.shareCopyBtn) {
+      els.shareCopyBtn.disabled = !hasAnyToken;
+    }
     if (els.shareRotateBtn) {
-      const canManage = canManageShareLinks();
       els.shareRotateBtn.disabled = !canManage;
       els.shareRotateBtn.hidden = !canManage;
     }
@@ -2342,6 +2351,19 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   function updateShareDialogLink() {
     if (!els.shareLinkInput) return;
+    if (!state.remote.readToken && !state.remote.editToken) {
+      els.shareLinkInput.value = "";
+      if (els.shareDialogNote) {
+        els.shareDialogNote.textContent = canManageShareLinks()
+          ? "Die bestehenden Share-Links konnten nicht geladen werden. Über Links erneuern erstellst du neue Links; alte Links werden dabei ungültig."
+          : "Für diesen Zugriff ist kein teilbarer Link verfügbar.";
+      }
+      if (els.shareCopyBtn) {
+        els.shareCopyBtn.disabled = true;
+      }
+      return;
+    }
+
     let mode = els.shareModeEdit?.checked ? "edit" : "read";
     if (mode === "read" && !state.remote.readToken && state.remote.editToken) {
       mode = "edit";
@@ -2351,6 +2373,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     const token = mode === "edit" ? state.remote.editToken : (state.remote.readToken || state.remote.token);
     const link = createShareLink(state.remote.listId, token, mode);
     els.shareLinkInput.value = link;
+    els.shareLinkInput.disabled = false;
+    if (els.shareCopyBtn) {
+      els.shareCopyBtn.disabled = !link;
+    }
 
     if (els.shareDialogNote) {
       els.shareDialogNote.textContent = mode === "edit"
@@ -2374,7 +2400,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
     const confirmed = await openDialog({
       title: "Share-Links erneuern",
-      message: "Alle bisherigen Share-Links ungueltig machen und neue Links erzeugen?",
+      message: "Alle bisherigen Share-Links ungültig machen und neue Links erzeugen?",
       confirmText: "Erneuern",
       cancelText: "Abbrechen",
       showCancel: true,
@@ -2406,6 +2432,21 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
       saveOwnerRemoteSession({ listId, authUid: uid });
+      if (els.shareModeRead) {
+        els.shareModeRead.disabled = false;
+        els.shareModeRead.checked = true;
+      }
+      if (els.shareModeEdit) {
+        els.shareModeEdit.disabled = false;
+        els.shareModeEdit.checked = false;
+      }
+      if (els.shareLinkInput) {
+        els.shareLinkInput.disabled = false;
+        els.shareLinkInput.placeholder = "";
+      }
+      if (els.shareCopyBtn) {
+        els.shareCopyBtn.disabled = false;
+      }
       updateShareDialogLink();
       updateAccessUi();
       showToast("Share-Links erneuert.", "success");
