@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.15";
+  const APP_VERSION = "2026.05.08.16";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -156,7 +156,8 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     renderApp();
     cleanVersionParamsFromUrl();
     startRemoteVersionChecks();
-    void initFirebaseAndMaybeOpenSharedList();
+    state.remote.initPromise = initFirebaseAndMaybeOpenSharedList();
+    void state.remote.initPromise;
   }
 
 
@@ -1829,6 +1830,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       canWrite: true,
       openedFromShareLink: false,
       unsubscribe: null,
+      initPromise: null,
       applyingRemote: false,
       saveTimer: 0,
       saving: false,
@@ -1896,6 +1898,16 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       console.error("Anonyme Firebase-Anmeldung fehlgeschlagen:", error);
       showToast("Firebase-Anmeldung fehlgeschlagen.", "danger");
       return false;
+    }
+  }
+
+  async function waitForFirebaseInitialization() {
+    if (state.remote.configured || !state.remote.initPromise) return;
+
+    try {
+      await state.remote.initPromise;
+    } catch {
+      // Der konkrete Fehler wird beim eigentlichen Firebase-Zugriff gemeldet.
     }
   }
 
@@ -1975,20 +1987,34 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   }
 
   async function handleShareButtonClick() {
-    if (!(await ensureFirebaseReady())) return;
+    try {
+      await waitForFirebaseInitialization();
+      if (!(await ensureFirebaseReady())) {
+        openShareDialog({ allowEmpty: true, note: "Firebase konnte nicht gestartet werden. Ohne Firebase kann kein Share-Link erstellt werden." });
+        return;
+      }
 
-    if (!state.remote.listId) {
-      await createSharedListFromCurrentState();
-    }
+      if (!state.remote.listId) {
+        openShareDialog({ allowEmpty: true, note: "Share-Link wird erstellt ..." });
+        const created = await createSharedListFromCurrentState();
+        if (!created) {
+          setShareDialogEmptyState("Share-Link konnte nicht erstellt werden. Bitte prüfe die Firebase-Regeln und versuche es erneut.");
+          return;
+        }
+      }
 
-    if (!state.remote.listId) return;
-    if (canManageShareLinks() && (!state.remote.readToken || !state.remote.editToken)) {
-      const tokens = await loadShareTokensForOwner(state.remote.listId);
-      state.remote.readToken = tokens.readToken || state.remote.readToken;
-      state.remote.editToken = tokens.editToken || state.remote.editToken;
-      state.remote.token = state.remote.editToken || state.remote.token;
+      if (!state.remote.listId) return;
+      if (canManageShareLinks() && (!state.remote.readToken || !state.remote.editToken)) {
+        const tokens = await loadShareTokensForOwner(state.remote.listId);
+        state.remote.readToken = tokens.readToken || state.remote.readToken;
+        state.remote.editToken = tokens.editToken || state.remote.editToken;
+        state.remote.token = state.remote.editToken || state.remote.token;
+      }
+      openShareDialog();
+    } catch (error) {
+      console.error("Teilen-Dialog konnte nicht vorbereitet werden:", error);
+      openShareDialog({ allowEmpty: true, note: "Teilen konnte nicht vorbereitet werden. Bitte lade die Seite neu und versuche es noch einmal." });
     }
-    openShareDialog();
   }
 
   async function restoreOwnedSharedListFromLocalSession() {
@@ -2127,7 +2153,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   async function createSharedListFromCurrentState() {
     const uid = state.remote.user?.uid;
-    if (!uid) return;
+    if (!uid) return false;
 
     const listId = createShareId("lst", SHARE_LIST_ID_LENGTH);
     const now = Date.now();
@@ -2162,9 +2188,11 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       subscribeToSharedList(listId);
       showToast("Geteilte Ticketliste erstellt.", "success");
       updateAccessUi();
+      return true;
     } catch (error) {
       console.error("Share-Liste konnte nicht erstellt werden:", error);
       showToast("Share-Liste konnte nicht erstellt werden.", "danger");
+      return false;
     }
   }
 
@@ -2293,27 +2321,34 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     return Boolean(state.remote.configured && state.remote.db && state.remote.listId && state.remote.role === SHARE_ROLE_OWNER);
   }
 
-  function openShareDialog() {
-    if (!els.shareDialogBackdrop) return;
+  function openShareDialog({ allowEmpty = false, note = "" } = {}) {
+    if (!els.shareDialogBackdrop) {
+      showToast("Teilen-Dialog konnte nicht geöffnet werden. Bitte lade die Seite neu.", "danger");
+      return;
+    }
 
     const canManage = canManageShareLinks();
     const hasReadToken = Boolean(state.remote.readToken);
     const hasEditToken = Boolean(state.remote.editToken) && state.remote.canWrite;
     const hasAnyToken = hasReadToken || hasEditToken;
 
-    if (!canManage && !state.remote.canWrite && !state.remote.readToken) {
+    if (!allowEmpty && !canManage && !state.remote.canWrite && !state.remote.readToken) {
       showToast("Dieser Link kann nicht weiter freigegeben werden.", "warning");
       return;
     }
-    if (!hasAnyToken && !canManage) {
+    if (!allowEmpty && !hasAnyToken && !canManage) {
       showToast("Share-Links konnten nicht geladen werden.", "warning");
       return;
     }
 
-    els.shareModeRead.disabled = !hasAnyToken || (!hasReadToken && hasEditToken);
-    els.shareModeRead.checked = hasReadToken || !hasEditToken;
-    els.shareModeEdit.checked = !hasReadToken && hasEditToken;
-    els.shareModeEdit.disabled = !hasAnyToken || !hasEditToken;
+    if (els.shareModeRead) {
+      els.shareModeRead.disabled = !hasAnyToken || (!hasReadToken && hasEditToken);
+      els.shareModeRead.checked = hasReadToken || !hasEditToken;
+    }
+    if (els.shareModeEdit) {
+      els.shareModeEdit.checked = !hasReadToken && hasEditToken;
+      els.shareModeEdit.disabled = !hasAnyToken || !hasEditToken;
+    }
     if (els.shareLinkInput) {
       els.shareLinkInput.disabled = !hasAnyToken;
       els.shareLinkInput.placeholder = hasAnyToken ? "" : "Keine Links geladen";
@@ -2325,7 +2360,13 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       els.shareRotateBtn.disabled = !canManage;
       els.shareRotateBtn.hidden = !canManage;
     }
-    updateShareDialogLink();
+    if (hasAnyToken) {
+      updateShareDialogLink();
+    } else {
+      setShareDialogEmptyState(note || (canManage
+        ? "Die bestehenden Share-Links konnten nicht geladen werden. Über Links erneuern erstellst du neue Links; alte Links werden dabei ungültig."
+        : "Für diesen Zugriff ist kein teilbarer Link verfügbar."));
+    }
 
     els.shareDialogBackdrop.classList.remove("open");
     els.shareDialogBackdrop.hidden = false;
@@ -2352,15 +2393,9 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   function updateShareDialogLink() {
     if (!els.shareLinkInput) return;
     if (!state.remote.readToken && !state.remote.editToken) {
-      els.shareLinkInput.value = "";
-      if (els.shareDialogNote) {
-        els.shareDialogNote.textContent = canManageShareLinks()
-          ? "Die bestehenden Share-Links konnten nicht geladen werden. Über Links erneuern erstellst du neue Links; alte Links werden dabei ungültig."
-          : "Für diesen Zugriff ist kein teilbarer Link verfügbar.";
-      }
-      if (els.shareCopyBtn) {
-        els.shareCopyBtn.disabled = true;
-      }
+      setShareDialogEmptyState(canManageShareLinks()
+        ? "Die bestehenden Share-Links konnten nicht geladen werden. Über Links erneuern erstellst du neue Links; alte Links werden dabei ungültig."
+        : "Für diesen Zugriff ist kein teilbarer Link verfügbar.");
       return;
     }
 
@@ -2382,6 +2417,20 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       els.shareDialogNote.textContent = mode === "edit"
         ? "Editierbare Links erlauben Hinzufügen, Bearbeiten, Löschen und CSV-Import."
         : "Read-only-Links erlauben Ansehen und CSV-Export, aber keine Änderungen.";
+    }
+  }
+
+  function setShareDialogEmptyState(note) {
+    if (els.shareLinkInput) {
+      els.shareLinkInput.value = "";
+      els.shareLinkInput.disabled = true;
+      els.shareLinkInput.placeholder = "Kein Share-Link verfügbar";
+    }
+    if (els.shareCopyBtn) {
+      els.shareCopyBtn.disabled = true;
+    }
+    if (els.shareDialogNote) {
+      els.shareDialogNote.textContent = note;
     }
   }
 
