@@ -1464,6 +1464,10 @@ tbody tr:last-child td {
     grid-template-columns: 1fr;
   }
 
+  .share-rotate-btn {
+    margin-right: 0;
+  }
+
   .toast,
   .toast[data-position="top-left"] {
     top: 12px;
@@ -1672,6 +1676,10 @@ body.read-only-mode .share-status {
   margin: 0 0 18px !important;
   color: var(--muted-2) !important;
   font-size: 0.86rem;
+}
+
+.share-rotate-btn {
+  margin-right: auto;
 }
 
 .readonly-action-badge {
