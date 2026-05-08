@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.16";
+  const APP_VERSION = "2026.05.08.17";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -1835,6 +1835,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       saveTimer: 0,
       saving: false,
       lastToastAt: 0,
+      lastShareErrorMessage: "",
       baseUrl: "",
     };
   }
@@ -1998,7 +1999,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
         openShareDialog({ allowEmpty: true, note: "Share-Link wird erstellt ..." });
         const created = await createSharedListFromCurrentState();
         if (!created) {
-          setShareDialogEmptyState("Share-Link konnte nicht erstellt werden. Bitte prüfe die Firebase-Regeln und versuche es erneut.");
+          setShareDialogEmptyState(state.remote.lastShareErrorMessage || "Share-Link konnte nicht erstellt werden. Bitte prüfe die Firebase-Regeln und versuche es erneut.");
           return;
         }
       }
@@ -2155,6 +2156,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     const uid = state.remote.user?.uid;
     if (!uid) return false;
 
+    state.remote.lastShareErrorMessage = "";
     const listId = createShareId("lst", SHARE_LIST_ID_LENGTH);
     const now = Date.now();
     const { readToken, editToken, tokensData } = createShareTokenBundle(now);
@@ -2191,7 +2193,8 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       return true;
     } catch (error) {
       console.error("Share-Liste konnte nicht erstellt werden:", error);
-      showToast("Share-Liste konnte nicht erstellt werden.", "danger");
+      state.remote.lastShareErrorMessage = formatFirebaseErrorMessage(error, "Share-Link konnte nicht erstellt werden.");
+      showToast(state.remote.lastShareErrorMessage, "danger");
       return false;
     }
   }
@@ -2432,6 +2435,26 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     if (els.shareDialogNote) {
       els.shareDialogNote.textContent = note;
     }
+  }
+
+  function formatFirebaseErrorMessage(error, fallback) {
+    const code = String(error?.code || "").trim();
+    const message = String(error?.message || "").trim();
+    const normalizedCode = code.toLowerCase();
+
+    if (normalizedCode === "permission_denied" || normalizedCode === "permission-denied") {
+      return `${fallback} Firebase meldet: Zugriff durch Regeln verweigert.`;
+    }
+    if (normalizedCode.includes("network")) {
+      return `${fallback} Firebase ist gerade nicht erreichbar.`;
+    }
+    if (code) {
+      return `${fallback} Firebase-Code: ${code}.`;
+    }
+    if (message) {
+      return `${fallback} ${message.slice(0, 180)}`;
+    }
+    return fallback;
   }
 
   async function copyShareLinkFromDialog() {
