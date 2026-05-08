@@ -6,7 +6,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.06";
+  const APP_VERSION = "2026.05.08.08";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_LAST_REMOTE_KEY = "eventTicketManager.lastRemoteVersion";
@@ -1765,6 +1765,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       editToken: "",
       role: "local",
       canWrite: true,
+      openedFromShareLink: false,
       unsubscribe: null,
       applyingRemote: false,
       saveTimer: 0,
@@ -1870,6 +1871,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.token = token;
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
       state.remote.canWrite = isOwner || canWrite;
+      state.remote.openedFromShareLink = true;
       if (role === SHARE_ROLE_READ) state.remote.readToken = token;
       if (role === SHARE_ROLE_EDIT) state.remote.editToken = token;
       subscribeToSharedList(listId);
@@ -1965,6 +1967,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.token = editToken;
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
+      state.remote.openedFromShareLink = false;
       subscribeToSharedList(listId);
       showToast("Geteilte Ticketliste erstellt.", "success");
       updateAccessUi();
@@ -2078,16 +2081,19 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     if (els.shareStatus) {
-      els.shareStatus.textContent = getShareStatusText();
+      const statusText = getShareStatusText();
+      els.shareStatus.textContent = statusText;
+      els.shareStatus.hidden = !statusText;
     }
   }
 
   function getShareStatusText() {
-    if (!state.remote.configured) return "Lokal · Firebase noch nicht konfiguriert";
-    if (!state.remote.listId) return "Lokale Ticketliste";
-    if (state.remote.role === SHARE_ROLE_OWNER) return "Geteilte Ticketliste · Besitzer/Bearbeiten";
-    if (state.remote.canWrite) return "Geteilte Ticketliste · Bearbeiten";
-    return "Geteilte Ticketliste · Nur lesen";
+    if (!state.remote.openedFromShareLink || !state.remote.listId) return "";
+    if (state.remote.role === SHARE_ROLE_OWNER) {
+      return "Share-Link · Besitzer/Bearbeiten";
+    }
+    if (state.remote.canWrite) return "Share-Link · Bearbeiten";
+    return "Share-Link · Nur lesen";
   }
 
   function canManageShareLinks() {
