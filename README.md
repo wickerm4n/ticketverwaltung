@@ -1,31 +1,31 @@
 # Ticketverwaltung
 
-Eine kleine Web-App, mit der du Ticketlisten für ein Event verwalten kannst.
+Eine Web-App zur Verwaltung von Event- und Menü-Tickets.
 
-## Was die App kann
+## Funktionen
 
-- Tickets anlegen, bearbeiten, suchen und löschen
-- Vorname, Nachname, Telefonnummer, Tickettyp, Menü und Preis speichern
-- normale Tickets und VIP-Tickets unterscheiden
-- Einnahmen und freie Plätze anzeigen
-- einzelne oder mehrere Tickets als CSV-Datei exportieren
-- Tickets aus einer CSV-Datei importieren
-- eine Ticketliste per Share-Link teilen
-- andere Personen wahlweise nur lesen oder mitbearbeiten lassen
+- Tickets erstellen, bearbeiten, suchen und löschen
+- Ticketnummer, Vorname, Nachname, Telefonnummer, Tickettyp, Menü und Preis verwalten
+- mehrere Tickets markieren und gesammelt löschen
+- ausgewählte Tickets oder die komplette Liste als CSV-Datei exportieren
+- Ticketdaten per CSV importieren
+- Share-Link für geteilte Ticketlisten erstellen
+- Read-only-Link für reine Ansicht
+- Edit-Link für gemeinsames Bearbeiten
+- automatische Synchronisierung geteilter Listen über Firebase
+- Hinweisbenachrichtigungen und optionale Bestätigungsdialoge
 
-## App öffnen
+## Aufrufen
 
 ```text
 https://wickerm4n.github.io/ticketverwaltung/
 ```
 
-## Ticketliste teilen
+## Teilen
 
-Über das Teilen-Symbol oben rechts kannst du einen Link zur aktuellen Ticketliste erstellen.
+Über das Teilen-Symbol im Header kann ein Link für die aktuelle Ticketliste erstellt werden.
 
-- **Read-only:** Personen mit diesem Link können die Liste ansehen und exportieren, aber nichts ändern.
-- **Editierbar:** Personen mit diesem Link können Tickets hinzufügen, bearbeiten, löschen und importieren.
+- **Read-only:** andere Personen können die Liste ansehen, aber nicht ändern.
+- **Editierbar:** andere Personen können Tickets hinzufügen, bearbeiten und löschen.
 
-Die Share-Links sind nur für Personen gedacht, denen du den Link bewusst gibst.
-Als Besitzer kannst du alte Share-Links über **Links erneuern** ungültig machen und neue Links erzeugen.
-Wenn du die App später im selben Browser wieder öffnest, arbeitet sie mit derselben geteilten Liste weiter.
+Geteilte Ticketlisten sind nur für Personen bestimmt, die den jeweiligen Share-Link erhalten haben.

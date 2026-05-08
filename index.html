@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://ticketverwaltung-b5164-default-rtdb.europe-west1.firebasedatabase.app; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.05.08.18">
+  <meta name="app-version" content="2026.05.08.05">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="assets/img/icon.svg?v=2026.05.08.18" type="image/svg+xml">
-  <link rel="stylesheet" href="assets/css/style.css?v=2026.05.08.18">
-  <script type="module" src="assets/js/app.js?v=2026.05.08.18"></script>
+  <link rel="icon" href="assets/img/icon.svg?v=2026.05.08.05" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/style.css?v=2026.05.08.05">
+  <script type="module" src="assets/js/app.js?v=2026.05.08.05"></script>
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -57,7 +57,7 @@
       <div>
         <p class="eyebrow">Event</p>
         <h1>Ticketverwaltung</h1>
-        <p class="share-status" id="shareStatus" hidden></p>
+        <p class="share-status" id="shareStatus">Lokale Ticketliste</p>
       </div>
       <div class="hero-actions" role="toolbar" aria-label="Header-Aktionen">
         <button class="btn btn-soft header-icon-btn icon-action" id="exportCsvBtn" type="button" data-tooltip="Tickets als CSV-Datei exportieren" aria-label="Tickets als CSV-Datei exportieren">
@@ -278,7 +278,6 @@
       <p class="share-note" id="shareDialogNote">Der Link wird in Firebase gespeichert und live synchronisiert.</p>
 
       <div class="modal-actions">
-        <button class="btn btn-soft share-rotate-btn" id="shareRotateBtn" type="button">Links erneuern</button>
         <button class="btn btn-soft" id="shareCloseBtn" type="button">Schließen</button>
         <button class="btn btn-primary" id="shareCopyBtn" type="button">Link kopieren</button>
       </div>
