@@ -1,12 +1,12 @@
 import { firebaseConfig, appConfig } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbGet, onValue } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
+import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbGet, onValue, runTransaction } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
 
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.08.20";
+  const APP_VERSION = "2026.05.09.02";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -44,6 +44,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   const SHARE_TOKEN_LENGTH = 24;
   const SHARE_LIST_ID_LENGTH = 18;
   const REMOTE_SAVE_DEBOUNCE_MS = 350;
+  const REMOTE_SAVE_RETRY_MS = 1200;
   const REMOTE_TOAST_COOLDOWN_MS = 2500;
   const FIREBASE_REQUIRED_CONFIG_KEYS = ["apiKey", "authDomain", "databaseURL", "projectId", "appId"];
 
@@ -736,7 +737,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
     state.tickets = nextTickets;
 
-    if (!saveData()) {
+    if (!saveData({ deletedTicketIds: targetIds })) {
       state.tickets = previousTickets;
       return { deletedCount: 0, saved: false };
     }
@@ -1343,7 +1344,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     state.counters = result.counters;
     clearSelectedTickets();
 
-    if (!saveData()) {
+    if (!saveData({ fullReplace: true })) {
       state.tickets = previousTickets;
       state.counters = previousCounters;
       state.selectedTicketIds = previousSelectedTicketIds;
@@ -1653,7 +1654,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     state.counters = { normal: 1, vip: 1 };
     clearSelectedTickets();
 
-    if (!saveData()) {
+    if (!saveData({ fullReplace: true })) {
       state.tickets = previousTickets;
       state.counters = previousCounters;
       state.selectedTicketIds = previousSelectedTicketIds;
@@ -1844,6 +1845,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       applyingRemote: false,
       saveTimer: 0,
       saving: false,
+      saveQueued: false,
+      changeVersion: 0,
+      pendingFullReplace: false,
+      pendingDeletedTicketIds: new Set(),
       lastToastAt: 0,
       lastShareErrorMessage: "",
       baseUrl: "",
@@ -2220,53 +2225,135 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
         return;
       }
 
-      state.remote.applyingRemote = true;
-      try {
-        applyPersistedData(snapshot.val());
-        saveSharedData(listId);
-        clearSelectedTickets();
-        if (state.editingId && !state.tickets.some((ticket) => ticket.id === state.editingId)) {
-          clearForm();
-        }
-        renderApp();
-      } catch (error) {
-        console.error("Remote-Daten konnten nicht verarbeitet werden:", error);
-        showRemoteToast("Remote-Daten konnten nicht verarbeitet werden.", "danger");
-      } finally {
-        state.remote.applyingRemote = false;
+      if (hasPendingRemoteSave()) {
+        return;
       }
+
+      applyRemotePersistedData(snapshot.val(), listId);
     }, (error) => {
       console.error("Firebase-Synchronisierung fehlgeschlagen:", error);
       showToast("Firebase-Synchronisierung fehlgeschlagen.", "danger");
     });
   }
 
-  function scheduleRemoteSave() {
+  function markRemoteStateDirty({ fullReplace = false, deletedTicketIds = [] } = {}) {
+    if (fullReplace) {
+      state.remote.pendingFullReplace = true;
+      state.remote.pendingDeletedTicketIds.clear();
+    } else {
+      Array.from(deletedTicketIds).forEach((id) => {
+        const safeId = String(id ?? "").trim();
+        if (SAFE_ID_PATTERN.test(safeId)) {
+          state.remote.pendingDeletedTicketIds.add(safeId);
+        }
+      });
+    }
+
+    state.remote.changeVersion += 1;
+    scheduleRemoteSave();
+  }
+
+  function hasPendingRemoteSave() {
+    return Boolean(
+      state.remote.saving
+      || state.remote.saveTimer
+      || state.remote.saveQueued
+      || state.remote.pendingFullReplace
+      || state.remote.pendingDeletedTicketIds.size > 0
+    );
+  }
+
+  function scheduleRemoteSave(delay = REMOTE_SAVE_DEBOUNCE_MS) {
     window.clearTimeout(state.remote.saveTimer);
     state.remote.saveTimer = window.setTimeout(() => {
+      state.remote.saveTimer = 0;
       void writeRemoteStateNow();
-    }, REMOTE_SAVE_DEBOUNCE_MS);
+    }, delay);
   }
 
   async function writeRemoteStateNow() {
-    if (!canWriteRemoteList() || state.remote.saving) return;
+    if (!canWriteRemoteList()) return;
+
+    if (state.remote.saving) {
+      state.remote.saveQueued = true;
+      return;
+    }
 
     state.remote.saving = true;
+    state.remote.saveQueued = false;
+
+    const listId = state.remote.listId;
     const payload = createPersistedData();
+    const startedChangeVersion = state.remote.changeVersion;
+    const forceReplace = Boolean(state.remote.pendingFullReplace);
+    const deletedTicketIds = new Set(state.remote.pendingDeletedTicketIds);
     const now = Date.now();
 
     try {
-      await dbSet(dbRef(state.remote.db, `lists/${state.remote.listId}/state`), payload);
-      await dbUpdate(dbRef(state.remote.db, `lists/${state.remote.listId}/meta`), {
+      const transactionResult = await runTransaction(
+        dbRef(state.remote.db, `lists/${listId}/state`),
+        (remoteValue) => {
+          if (forceReplace || !remoteValue || typeof remoteValue !== "object") {
+            return payload;
+          }
+
+          return mergePersistedDataForRemoteTransaction(remoteValue, payload, deletedTicketIds);
+        },
+        { applyLocally: false },
+      );
+
+      if (!transactionResult.committed) {
+        throw new Error("Remote-Transaktion wurde nicht übernommen.");
+      }
+
+      deletedTicketIds.forEach((id) => state.remote.pendingDeletedTicketIds.delete(id));
+      if (forceReplace && state.remote.changeVersion === startedChangeVersion) {
+        state.remote.pendingFullReplace = false;
+      }
+
+      await dbUpdate(dbRef(state.remote.db, `lists/${listId}/meta`), {
         updatedAt: now,
         revision: now,
         appVersion: APP_VERSION,
       });
+
+      if (state.remote.changeVersion === startedChangeVersion) {
+        state.remote.saveQueued = false;
+      } else {
+        state.remote.saveQueued = true;
+      }
+
+      if (transactionResult.snapshot.exists() && state.remote.listId === listId && !state.remote.saveQueued) {
+        applyRemotePersistedData(transactionResult.snapshot.val(), listId);
+      }
     } catch (error) {
       console.error("Remote-Speichern fehlgeschlagen:", error);
-      showRemoteToast("Remote-Speichern fehlgeschlagen.", "danger");
+      state.remote.saveQueued = true;
+      showRemoteToast("Remote-Speichern fehlgeschlagen. Erneuter Versuch läuft automatisch.", "danger");
     } finally {
       state.remote.saving = false;
+
+      if (state.remote.saveQueued || state.remote.pendingFullReplace || state.remote.pendingDeletedTicketIds.size > 0) {
+        scheduleRemoteSave(state.remote.saveQueued ? REMOTE_SAVE_RETRY_MS : REMOTE_SAVE_DEBOUNCE_MS);
+      }
+    }
+  }
+
+  function applyRemotePersistedData(data, listId = state.remote.listId) {
+    state.remote.applyingRemote = true;
+    try {
+      applyPersistedData(data);
+      saveSharedData(listId);
+      clearSelectedTickets();
+      if (state.editingId && !state.tickets.some((ticket) => ticket.id === state.editingId)) {
+        clearForm();
+      }
+      renderApp();
+    } catch (error) {
+      console.error("Remote-Daten konnten nicht verarbeitet werden:", error);
+      showRemoteToast("Remote-Daten konnten nicht verarbeitet werden.", "danger");
+    } finally {
+      state.remote.applyingRemote = false;
     }
   }
 
@@ -2646,7 +2733,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     showToast(message, type);
   }
 
-  function saveData() {
+  function saveData(remoteOptions = {}) {
     const data = createPersistedData();
     const saved = saveCurrentDataSnapshot(data);
 
@@ -2656,7 +2743,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     if (canWriteRemoteList() && !state.remote.applyingRemote) {
-      scheduleRemoteSave();
+      markRemoteStateDirty(remoteOptions);
     }
 
     return true;
@@ -2710,6 +2797,13 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   }
 
   function applyPersistedData(parsed) {
+    const data = normalizePersistedData(parsed);
+    state.tickets = data.tickets;
+    state.counters = data.counters;
+    state.preferences = data.preferences;
+  }
+
+  function normalizePersistedData(parsed) {
     const rawTickets = Array.isArray(parsed?.tickets) ? parsed.tickets.slice(0, MAX_TICKETS) : [];
     const usedIds = new Set();
     const usedTicketNumbers = new Set();
@@ -2721,9 +2815,76 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       if (ticket) tickets.push(ticket);
     });
 
-    state.tickets = tickets;
-    state.counters = mergeCounters(counters, deriveCountersFromTickets(tickets));
-    state.preferences = sanitizePreferences(parsed?.preferences);
+    return {
+      version: 4,
+      tickets,
+      counters: mergeCounters(counters, deriveCountersFromTickets(tickets)),
+      preferences: sanitizePreferences(parsed?.preferences),
+    };
+  }
+
+  function mergePersistedDataForRemoteTransaction(remoteValue, localValue, deletedTicketIds) {
+    const remoteData = normalizePersistedData(remoteValue);
+    const localData = normalizePersistedData(localValue);
+    const removedIds = deletedTicketIds instanceof Set ? deletedTicketIds : new Set();
+    const mergedTickets = [];
+    const indexById = new Map();
+
+    remoteData.tickets.forEach((ticket) => {
+      if (removedIds.has(ticket.id)) return;
+      indexById.set(ticket.id, mergedTickets.length);
+      mergedTickets.push(ticket);
+    });
+
+    localData.tickets.forEach((localTicket) => {
+      if (removedIds.has(localTicket.id)) return;
+
+      const existingIndex = indexById.get(localTicket.id);
+      if (typeof existingIndex === "number") {
+        const remoteTicket = mergedTickets[existingIndex];
+        if (isTicketNewerOrEqual(localTicket, remoteTicket)) {
+          mergedTickets[existingIndex] = localTicket;
+        }
+        return;
+      }
+
+      if (mergedTickets.length < MAX_TICKETS) {
+        indexById.set(localTicket.id, mergedTickets.length);
+        mergedTickets.push(localTicket);
+      }
+    });
+
+    return normalizePersistedData({
+      version: 4,
+      tickets: mergedTickets,
+      counters: mergeCounters(localData.counters, remoteData.counters),
+      preferences: mergePreferences(remoteData.preferences, localData.preferences),
+    });
+  }
+
+  function isTicketNewerOrEqual(left, right) {
+    const leftTime = Date.parse(left?.updatedAt || left?.createdAt || "");
+    const rightTime = Date.parse(right?.updatedAt || right?.createdAt || "");
+
+    if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime)) {
+      return leftTime >= rightTime;
+    }
+
+    if (!Number.isNaN(leftTime)) return true;
+    if (!Number.isNaN(rightTime)) return false;
+    return true;
+  }
+
+  function mergePreferences(remotePreferences, localPreferences) {
+    const remoteSafe = sanitizePreferences(remotePreferences);
+    const localSafe = sanitizePreferences(localPreferences);
+
+    return {
+      suppressedConfirmations: {
+        ...remoteSafe.suppressedConfirmations,
+        ...localSafe.suppressedConfirmations,
+      },
+    };
   }
 
   function resetStateToDefaults() {
