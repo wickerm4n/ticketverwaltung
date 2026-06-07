@@ -96,6 +96,7 @@ button {
 }
 
 .hero > div:first-child {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -120,10 +121,10 @@ h1 {
 }
 
 .event-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(190px, 270px) max-content;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
   margin-top: 14px;
 }
 
@@ -134,9 +135,8 @@ h1 {
 }
 
 .event-controls select {
-  width: min(270px, 100%);
-  min-width: min(190px, 100%);
-  flex: 0 1 270px;
+  width: 100%;
+  min-width: 0;
   min-height: 42px;
   border-radius: 15px;
   font-weight: 850;
@@ -1387,12 +1387,8 @@ tbody tr:last-child td {
   }
 
   .event-controls {
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
     width: 100%;
-  }
-
-  .event-controls select {
-    flex: 1 1 180px;
-    min-width: 0;
   }
 
   .hero-actions .btn,
@@ -1546,11 +1542,15 @@ tbody tr:last-child td {
   }
 
   .event-select-label {
-    flex: 1 0 100%;
+    grid-column: 1 / -1;
   }
 
   .event-controls select {
-    flex-basis: calc(100% - 52px);
+    grid-column: 1 / -1;
+  }
+
+  .event-action-group {
+    grid-column: 1 / -1;
   }
 
   tbody tr {
