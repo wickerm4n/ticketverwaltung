@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.06.07.04";
+  const APP_VERSION = "2026.06.07.05";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -38,6 +38,7 @@
   const SHARE_PARAM_LIST = "list";
   const SHARE_PARAM_TOKEN = "token";
   const SHARE_PARAM_ROLE = "role";
+  const SHARE_PARAM_EVENT = "event";
   const SHARE_ROLE_READ = "reader";
   const SHARE_ROLE_EDIT = "editor";
   const SHARE_ROLE_OWNER = "owner";
@@ -561,19 +562,48 @@
     return safeListId ? state.events.items.find((event) => event.listId === safeListId) || null : null;
   }
 
-  function activateEventForRemoteList(listId) {
+  function activateEventForRemoteList(listId, eventName = "") {
     const safeListId = sanitizeShareToken(listId, 128);
     if (!safeListId) return null;
 
+    const sharedEventName = normalizeEventName(eventName);
     let event = findEventByListId(safeListId);
     if (!event) {
-      event = createEventMeta({ name: getNextEventName(), listId: safeListId });
-      state.events.items.push(event);
+      const reusableEvent = getReusableDefaultEventForShare();
+      if (reusableEvent) {
+        event = reusableEvent;
+        event.name = sharedEventName || event.name;
+        event.listId = safeListId;
+        event.updatedAt = Date.now();
+        safeStorageRemove(localStorage, `${EVENT_DATA_PREFIX}${event.id}`);
+      } else {
+        event = createEventMeta({ name: sharedEventName || getNextEventName(), listId: safeListId });
+        state.events.items.push(event);
+      }
+    } else if (sharedEventName && event.name !== sharedEventName) {
+      event.name = sharedEventName;
+      event.updatedAt = Date.now();
     }
 
     state.events.activeId = event.id;
     saveEventRegistry();
     return event;
+  }
+
+  function getReusableDefaultEventForShare() {
+    const event = getActiveEvent();
+    if (!event || event.listId || state.events.items.length !== 1) return null;
+    if (normalizeEventName(event.name) !== "Event 1") return null;
+    if (!isCurrentEventEmpty()) return null;
+    return event;
+  }
+
+  function isCurrentEventEmpty() {
+    const preferences = sanitizePreferences(state.preferences);
+    return state.tickets.length === 0
+      && state.counters.normal === 1
+      && state.counters.vip === 1
+      && Object.keys(preferences.suppressedConfirmations || {}).length === 0;
   }
 
   function linkActiveEventToRemoteList(listId) {
@@ -743,6 +773,7 @@
       url.searchParams.delete(SHARE_PARAM_LIST);
       url.searchParams.delete(SHARE_PARAM_TOKEN);
       url.searchParams.delete(SHARE_PARAM_ROLE);
+      url.searchParams.delete(SHARE_PARAM_EVENT);
       url.hash = "";
       window.history.replaceState(null, document.title, url.href);
     } catch {
@@ -2592,9 +2623,10 @@
     const token = sanitizeShareToken(params.get(SHARE_PARAM_TOKEN), 256);
     const rawRole = String(params.get(SHARE_PARAM_ROLE) || "read").toLowerCase();
     const role = rawRole === "edit" || rawRole === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ;
+    const eventName = normalizeEventName(params.get(SHARE_PARAM_EVENT));
 
     if (!listId || !token) return null;
-    return { listId, token, role };
+    return { listId, token, role, eventName };
   }
 
   function getShareKey({ listId, token, role } = {}) {
@@ -2617,7 +2649,7 @@
     await joinSharedListFromUrl(shareParams);
   }
 
-  async function joinSharedListFromUrl({ listId, token, role }) {
+  async function joinSharedListFromUrl({ listId, token, role, eventName = "" }) {
     if (!(await ensureFirebaseReady())) return;
     if (!(await prepareCurrentEventForNavigation())) return;
 
@@ -2633,7 +2665,7 @@
       const readToken = ownerTokens?.readToken || (role === SHARE_ROLE_READ ? token : "");
       const editToken = ownerTokens?.editToken || (role === SHARE_ROLE_EDIT ? token : "");
       resetRemoteListConnection();
-      activateEventForRemoteList(listId);
+      activateEventForRemoteList(listId, eventName);
       loadDataForActiveEvent();
       state.remote.listId = listId;
       state.remote.token = isOwner ? (editToken || token) : token;
@@ -2647,7 +2679,7 @@
         saveOwnerRemoteSession({ listId, authUid: uid });
       }
       subscribeToSharedList(listId);
-      replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read");
+      replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read", eventName);
       showToast(state.remote.canWrite ? "Editierbarer Share-Link geöffnet." : "Read-only-Share-Link geöffnet.", "success");
       updateAccessUi();
     } catch (error) {
@@ -3314,29 +3346,44 @@
     url.searchParams.delete(SHARE_PARAM_LIST);
     url.searchParams.delete(SHARE_PARAM_TOKEN);
     url.searchParams.delete(SHARE_PARAM_ROLE);
-    url.hash = createShareHash(listId, token, mode);
+    url.searchParams.delete(SHARE_PARAM_EVENT);
+    url.hash = createShareHash(listId, token, mode, getCurrentShareEventName(listId));
     return url.href;
   }
 
-  function createShareHash(listId, token, mode) {
+  function createShareHash(listId, token, mode, eventName = "") {
     const params = new URLSearchParams();
     params.set(SHARE_PARAM_LIST, listId);
     params.set(SHARE_PARAM_TOKEN, token);
     params.set(SHARE_PARAM_ROLE, mode === "edit" ? "edit" : "read");
+    const safeEventName = normalizeEventName(eventName);
+    if (safeEventName) {
+      params.set(SHARE_PARAM_EVENT, safeEventName);
+    }
     return params.toString();
   }
 
-  function replaceLegacyShareQueryWithHash(listId, token, mode) {
+  function getCurrentShareEventName(listId = state.remote.listId) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    const activeEvent = getActiveEvent();
+    const event = activeEvent?.listId === safeListId
+      ? activeEvent
+      : findEventByListId(safeListId);
+    return normalizeEventName(event?.name);
+  }
+
+  function replaceLegacyShareQueryWithHash(listId, token, mode, eventName = "") {
     try {
       const url = new URL(window.location.href);
-      if (!url.searchParams.has(SHARE_PARAM_LIST) && !url.searchParams.has(SHARE_PARAM_TOKEN) && !url.searchParams.has(SHARE_PARAM_ROLE)) {
+      if (!url.searchParams.has(SHARE_PARAM_LIST) && !url.searchParams.has(SHARE_PARAM_TOKEN) && !url.searchParams.has(SHARE_PARAM_ROLE) && !url.searchParams.has(SHARE_PARAM_EVENT)) {
         return;
       }
 
       url.searchParams.delete(SHARE_PARAM_LIST);
       url.searchParams.delete(SHARE_PARAM_TOKEN);
       url.searchParams.delete(SHARE_PARAM_ROLE);
-      url.hash = createShareHash(listId, token, mode);
+      url.searchParams.delete(SHARE_PARAM_EVENT);
+      url.hash = createShareHash(listId, token, mode, eventName);
       window.history.replaceState(null, document.title, url.href);
     } catch {
       // Alte Query-Links funktionieren weiter, die Bereinigung ist nur Härtung.
