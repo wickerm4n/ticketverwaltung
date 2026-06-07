@@ -33,12 +33,19 @@ Jedes Event hat einen eigenen Share-Link. Ein Link zu einem alten Event zeigt al
 
 ## Lokal nutzen
 
-Die `index.html` kann auch direkt auf dem eigenen PC im Browser geöffnet werden. Dann funktionieren Ticket-Eingabe, Events, Suche sowie CSV-Import und CSV-Export lokal.
+Die `index.html` kann direkt per Doppelklick im Browser geöffnet werden. Dann funktionieren Ticket-Eingabe, Events, Suche, CSV-Import und CSV-Export vollständig lokal/offline über den Browser-Speicher.
 
-Share-Links funktionieren nur, wenn das Tool online geöffnet wird, zum Beispiel über GitHub Pages.
+Alternativ kann der Ordner über einen lokalen Webserver geöffnet werden, zum Beispiel über `http://localhost/...`. In diesem lokalen Entwicklungsmodus verwendet das Tool automatisch die aktuelle lokale Adresse als Basis-URL und erzwingt kein HTTPS-Upgrade.
+
+Share-Links mit Firebase funktionieren nur, wenn Firebase erreichbar ist. Bei reinem `file://`-Start bleibt die App lokal nutzbar, Share/Firebase wird aber bewusst deaktiviert.
 
 ## Link
 
 ```text
 https://wickerm4n.github.io/ticketverwaltung/
 ```
+
+## Lokaler Modus / Share-Failsafe
+
+Beim direkten lokalen Öffnen der `index.html` oder beim Start über `localhost`, `127.0.0.1` bzw. private LAN-Adressen ist der Share-Link-Button absichtlich deaktiviert. Die App bleibt lokal vollständig nutzbar, Share-Links sollen jedoch nur über die veröffentlichte GitHub-Pages-Seite erstellt werden.
+
