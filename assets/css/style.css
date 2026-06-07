@@ -135,10 +135,19 @@ h1 {
 
 .event-controls select {
   width: min(270px, 100%);
+  min-width: min(190px, 100%);
+  flex: 0 1 270px;
   min-height: 42px;
   border-radius: 15px;
   font-weight: 850;
   background-color: rgba(255, 255, 255, 0.085);
+}
+
+.event-action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
 }
 
 .event-controls .header-icon-btn {
