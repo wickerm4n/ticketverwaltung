@@ -95,6 +95,10 @@ button {
   overflow: visible;
 }
 
+.hero > div:first-child {
+  min-width: 0;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--primary);
@@ -113,6 +117,35 @@ h2 {
 h1 {
   font-size: clamp(2rem, 5vw, 4rem);
   letter-spacing: 0;
+}
+
+.event-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.event-select-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.event-controls select {
+  width: min(270px, 100%);
+  min-height: 42px;
+  border-radius: 15px;
+  font-weight: 850;
+  background-color: rgba(255, 255, 255, 0.085);
+}
+
+.event-controls .header-icon-btn {
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  flex: 0 0 42px;
 }
 
 h2 {
@@ -1023,6 +1056,10 @@ tbody tr:last-child td {
   font-weight: 650;
 }
 
+.dialog-input-row {
+  margin: 0 0 16px;
+}
+
 .dialog-opt-out {
   display: inline-flex;
   align-items: center;
@@ -1340,6 +1377,15 @@ tbody tr:last-child td {
     width: 100%;
   }
 
+  .event-controls {
+    width: 100%;
+  }
+
+  .event-controls select {
+    flex: 1 1 180px;
+    min-width: 0;
+  }
+
   .hero-actions .btn,
   .form-actions .btn {
     flex: 1 1 calc(50% - 8px);
@@ -1488,6 +1534,14 @@ tbody tr:last-child td {
   .form-actions .btn {
     flex-basis: 100%;
     width: 100%;
+  }
+
+  .event-select-label {
+    flex: 1 0 100%;
+  }
+
+  .event-controls select {
+    flex-basis: calc(100% - 52px);
   }
 
   tbody tr {

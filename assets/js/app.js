@@ -1,12 +1,7 @@
-import { firebaseConfig, appConfig } from "./firebase-config.js";
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
-import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbGet, onValue, runTransaction } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
-
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.05.09.02";
+  const APP_VERSION = "2026.06.07.04";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -19,13 +14,18 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   const VERSION_RELOAD_RETRY_MS = 60 * 1000;
 
   const STORAGE_KEY = "eventTicketManagerData.v3";
+  const EVENTS_STORAGE_KEY = "eventTicketManagerEvents.v1";
+  const ACTIVE_EVENT_STORAGE_KEY = "eventTicketManagerActiveEvent.v1";
+  const EVENT_DATA_PREFIX = "eventTicketManagerEventData.v1:";
   const LEGACY_REMOTE_SESSION_STORAGE_KEY = "eventTicketManagerRemote.v1";
   const OWNER_SESSION_STORAGE_KEY = "eventTicketManagerOwnerRemote.v1";
   const SHARED_STORAGE_PREFIX = "eventTicketManagerSharedData.v1:";
   const LEGACY_STORAGE_KEYS = ["eventTicketManagerData.v2", "eventTicketManagerData.v1"];
+  const MAX_EVENTS = 100;
   const MAX_TICKETS = 250;
   const MAX_PRICE = 999_999_999;
   const MAX_NAME_LENGTH = 40;
+  const MAX_EVENT_NAME_LENGTH = 48;
   const MAX_PHONE_LENGTH = 20;
   const MAX_SEARCH_LENGTH = 80;
   const MAX_STORAGE_LENGTH = 250_000;
@@ -47,6 +47,20 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   const REMOTE_SAVE_RETRY_MS = 1200;
   const REMOTE_TOAST_COOLDOWN_MS = 2500;
   const FIREBASE_REQUIRED_CONFIG_KEYS = ["apiKey", "authDomain", "databaseURL", "projectId", "appId"];
+
+  let firebaseConfig = null;
+  let appConfig = {};
+  let initializeApp = null;
+  let getAuth = null;
+  let signInAnonymously = null;
+  let getDatabase = null;
+  let dbRef = null;
+  let dbSet = null;
+  let dbUpdate = null;
+  let dbGet = null;
+  let onValue = null;
+  let runTransaction = null;
+  let firebaseRuntimeLoadPromise = null;
 
   const PRICES = Object.freeze({
     normal: 2500,
@@ -85,8 +99,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     dialogResolve: null,
     dialogReturnFocus: null,
     dialogPreferenceKey: "",
+    dialogInputEnabled: false,
     versionCheckInFlight: false,
     lastRemoteVersionCheckAt: 0,
+    events: { items: [], activeId: "" },
     remote: createDefaultRemoteState(),
   };
 
@@ -125,6 +141,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     csvImportInput: document.querySelector("#csvImportInput"),
     resetBtn: document.querySelector("#resetBtn"),
     shareBtn: document.querySelector("#shareBtn"),
+    eventSelect: document.querySelector("#eventSelect"),
+    newEventBtn: document.querySelector("#newEventBtn"),
+    renameEventBtn: document.querySelector("#renameEventBtn"),
+    deleteEventBtn: document.querySelector("#deleteEventBtn"),
     shareStatus: document.querySelector("#shareStatus"),
     shareDialogBackdrop: document.querySelector("#shareDialogBackdrop"),
     shareDialogCard: document.querySelector(".share-modal-card"),
@@ -142,6 +162,9 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     dialogCard: document.querySelector(".modal-card"),
     dialogTitle: document.querySelector("#dialogTitle"),
     dialogMessage: document.querySelector("#dialogMessage"),
+    dialogInputRow: document.querySelector("#dialogInputRow"),
+    dialogInputLabel: document.querySelector("#dialogInputLabel"),
+    dialogInput: document.querySelector("#dialogInput"),
     dialogSkipRow: document.querySelector("#dialogSkipRow"),
     dialogSkipCheckbox: document.querySelector("#dialogSkipCheckbox"),
     dialogCancelBtn: document.querySelector("#dialogCancelBtn"),
@@ -151,6 +174,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   function init() {
     rememberCurrentAppVersion();
     migrateLegacyRemoteSession();
+    initializeEvents();
 
     loadData();
     bindEvents();
@@ -373,6 +397,530 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
   }
 
+  function initializeEvents() {
+    const restoredEvents = loadEventRegistry();
+    if (restoredEvents.items.length > 0) {
+      state.events = restoredEvents;
+      saveEventRegistry();
+      return;
+    }
+
+    const legacySession = loadOwnerRemoteSession();
+    const firstEvent = createEventMeta({
+      name: "Event 1",
+      listId: legacySession?.listId || "",
+    });
+
+    state.events = {
+      items: [firstEvent],
+      activeId: firstEvent.id,
+    };
+    saveEventRegistry();
+  }
+
+  function loadEventRegistry() {
+    const rawRegistry = safeStorageGet(localStorage, EVENTS_STORAGE_KEY);
+    const activeIdFromStorage = sanitizeEventId(safeStorageGet(localStorage, ACTIVE_EVENT_STORAGE_KEY, 128));
+    let parsed = null;
+
+    if (rawRegistry) {
+      try {
+        parsed = JSON.parse(rawRegistry);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    const rawEvents = Array.isArray(parsed?.events) ? parsed.events.slice(0, MAX_EVENTS) : [];
+    const usedIds = new Set();
+    const items = rawEvents
+      .map((event, index) => sanitizeEventMeta(event, index, usedIds))
+      .filter(Boolean);
+    const activeId = activeIdFromStorage || sanitizeEventId(parsed?.activeId);
+    const safeActiveId = items.some((event) => event.id === activeId)
+      ? activeId
+      : (items[0]?.id || "");
+
+    return {
+      items,
+      activeId: safeActiveId,
+    };
+  }
+
+  function saveEventRegistry({ render = true } = {}) {
+    if (state.events.items.length === 0) {
+      const firstEvent = createEventMeta({ name: "Event 1" });
+      state.events.items = [firstEvent];
+      state.events.activeId = firstEvent.id;
+    }
+
+    const usedIds = new Set();
+    state.events.items = state.events.items
+      .slice(0, MAX_EVENTS)
+      .map((event, index) => sanitizeEventMeta(event, index, usedIds))
+      .filter(Boolean);
+
+    if (!state.events.items.some((event) => event.id === state.events.activeId)) {
+      state.events.activeId = state.events.items[0]?.id || "";
+    }
+
+    const payload = {
+      version: 1,
+      activeId: state.events.activeId,
+      events: state.events.items.map((event) => ({
+        id: event.id,
+        name: event.name,
+        listId: event.listId,
+        createdAt: event.createdAt,
+        updatedAt: event.updatedAt,
+      })),
+    };
+    const registrySaved = safeStorageSet(localStorage, EVENTS_STORAGE_KEY, JSON.stringify(payload));
+    const activeSaved = safeStorageSet(localStorage, ACTIVE_EVENT_STORAGE_KEY, state.events.activeId, 128);
+
+    if (render) {
+      renderEventSelector();
+    }
+
+    return registrySaved && activeSaved;
+  }
+
+  function sanitizeEventMeta(event, index, usedIds) {
+    const now = Date.now();
+    const id = getUniqueEventId(event?.id, usedIds);
+    const name = normalizeEventName(event?.name) || `Event ${index + 1}`;
+    const listId = sanitizeShareToken(event?.listId, 128);
+    const createdAt = normalizeTimestamp(event?.createdAt, now);
+    const updatedAt = Math.max(createdAt, normalizeTimestamp(event?.updatedAt, createdAt));
+
+    return {
+      id,
+      name,
+      listId,
+      createdAt,
+      updatedAt,
+    };
+  }
+
+  function createEventMeta({ name = "", listId = "" } = {}) {
+    const now = Date.now();
+    return {
+      id: createEventId(),
+      name: normalizeEventName(name) || getNextEventName(),
+      listId: sanitizeShareToken(listId, 128),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  function renderEventSelector() {
+    if (!els.eventSelect) return;
+
+    const activeId = state.events.activeId;
+    clearChildren(els.eventSelect);
+
+    state.events.items.forEach((event) => {
+      const option = document.createElement("option");
+      option.value = event.id;
+      option.textContent = getEventOptionLabel(event);
+      els.eventSelect.append(option);
+    });
+
+    els.eventSelect.value = activeId;
+  }
+
+  function getEventOptionLabel(event) {
+    const name = normalizeEventName(event?.name) || "Event";
+    return event?.listId ? `${name} (geteilt)` : name;
+  }
+
+  function getNextEventName() {
+    const usedNames = new Set(state.events.items.map((event) => normalizeEventName(event.name).toLocaleLowerCase("de-DE")));
+    let index = state.events.items.length + 1;
+    let name = `Event ${index}`;
+
+    while (usedNames.has(name.toLocaleLowerCase("de-DE"))) {
+      index += 1;
+      name = `Event ${index}`;
+    }
+
+    return name;
+  }
+
+  function getActiveEvent() {
+    return state.events.items.find((event) => event.id === state.events.activeId) || null;
+  }
+
+  function findEventById(eventId) {
+    const safeEventId = sanitizeEventId(eventId);
+    return safeEventId ? state.events.items.find((event) => event.id === safeEventId) || null : null;
+  }
+
+  function findEventByListId(listId) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    return safeListId ? state.events.items.find((event) => event.listId === safeListId) || null : null;
+  }
+
+  function activateEventForRemoteList(listId) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    if (!safeListId) return null;
+
+    let event = findEventByListId(safeListId);
+    if (!event) {
+      event = createEventMeta({ name: getNextEventName(), listId: safeListId });
+      state.events.items.push(event);
+    }
+
+    state.events.activeId = event.id;
+    saveEventRegistry();
+    return event;
+  }
+
+  function linkActiveEventToRemoteList(listId) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    const activeEvent = getActiveEvent();
+    if (!safeListId || !activeEvent) return false;
+
+    activeEvent.listId = safeListId;
+    activeEvent.updatedAt = Date.now();
+    saveEventRegistry();
+    return true;
+  }
+
+  async function handleEventSelectionChange() {
+    const targetEventId = els.eventSelect?.value || "";
+    if (!targetEventId || targetEventId === state.events.activeId) {
+      renderEventSelector();
+      return;
+    }
+
+    const switched = await switchToEvent(targetEventId);
+    if (!switched) {
+      renderEventSelector();
+    }
+  }
+
+  async function handleNewEventClick() {
+    const name = await openEventNameDialog({
+      title: "Neues Event",
+      message: "Name für das neue Event:",
+      defaultName: getNextEventName(),
+      confirmText: "Starten",
+    });
+    if (!name) return;
+
+    await createAndSwitchToNewEvent(name);
+  }
+
+  async function handleRenameEventClick() {
+    const activeEvent = getActiveEvent();
+    if (!activeEvent) {
+      showToast("Kein aktives Event gefunden.", "warning");
+      return;
+    }
+
+    const previousName = activeEvent.name;
+    const nextName = await openEventNameDialog({
+      title: "Event umbenennen",
+      message: "Neuer Name für das aktive Event:",
+      defaultName: previousName,
+      confirmText: "Speichern",
+    });
+    if (!nextName) return;
+
+    if (nextName === previousName) {
+      renderEventSelector();
+      return;
+    }
+
+    activeEvent.name = nextName;
+    activeEvent.updatedAt = Date.now();
+
+    if (!saveEventRegistry()) {
+      const currentEvent = getActiveEvent();
+      if (currentEvent) {
+        currentEvent.name = previousName;
+        currentEvent.updatedAt = Date.now();
+      }
+      saveEventRegistry();
+      showToast("Eventname konnte nicht gespeichert werden.", "danger");
+      return;
+    }
+
+    showToast("Event umbenannt.", "success");
+  }
+
+  async function handleDeleteEventClick() {
+    const activeEvent = getActiveEvent();
+    if (!activeEvent) {
+      showToast("Kein aktives Event gefunden.", "warning");
+      return;
+    }
+
+    const deleteSharedNote = activeEvent.listId
+      ? " Die Firebase-Liste und bestehende Share-Links bleiben abrufbar."
+      : "";
+    const lastEventNote = state.events.items.length <= 1
+      ? " Danach wird ein neues leeres Event angelegt."
+      : "";
+    const confirmed = await openDialog({
+      title: "Event löschen",
+      message: `Event "${activeEvent.name}" aus dieser App löschen?${deleteSharedNote}${lastEventNote}`,
+      confirmText: "Löschen",
+      cancelText: "Abbrechen",
+      showCancel: true,
+      variant: "danger",
+    });
+
+    if (!confirmed) return;
+
+    await deleteActiveEvent();
+  }
+
+  async function deleteActiveEvent() {
+    const activeEvent = getActiveEvent();
+    if (!activeEvent) return false;
+
+    const deletedIndex = Math.max(0, state.events.items.findIndex((event) => event.id === activeEvent.id));
+    const deletedEventId = activeEvent.id;
+    const deletedListId = activeEvent.listId;
+
+    resetRemoteListConnection();
+    removeEventLocalData(activeEvent);
+    clearShareUrlForList(deletedListId);
+
+    state.events.items = state.events.items.filter((event) => event.id !== deletedEventId);
+    if (state.events.items.length === 0) {
+      const replacement = createEventMeta({ name: "Event 1" });
+      state.events.items.push(replacement);
+      state.events.activeId = replacement.id;
+    } else {
+      const nextIndex = Math.min(deletedIndex, state.events.items.length - 1);
+      state.events.activeId = state.events.items[nextIndex].id;
+    }
+
+    saveEventRegistry();
+    loadDataForActiveEvent();
+    clearForm();
+    saveLocalData();
+    renderApp();
+
+    const nextEvent = getActiveEvent();
+    if (nextEvent?.listId) {
+      await connectActiveEventRemoteList(nextEvent);
+    }
+
+    showToast("Event gelöscht.", "success");
+    return true;
+  }
+
+  function removeEventLocalData(event) {
+    const eventId = sanitizeEventId(event?.id);
+    const listId = sanitizeShareToken(event?.listId, 128);
+
+    if (eventId) {
+      safeStorageRemove(localStorage, `${EVENT_DATA_PREFIX}${eventId}`);
+    }
+    if (listId) {
+      safeStorageRemove(localStorage, `${SHARED_STORAGE_PREFIX}${listId}`);
+
+      const session = loadOwnerRemoteSession();
+      if (session?.listId === listId) {
+        clearOwnerRemoteSession();
+      }
+    }
+  }
+
+  function clearShareUrlForList(listId) {
+    const safeListId = sanitizeShareToken(listId, 128);
+    if (!safeListId) return;
+
+    try {
+      const shareParams = getShareParamsFromUrl();
+      if (shareParams?.listId !== safeListId) return;
+
+      const url = new URL(window.location.href);
+      url.searchParams.delete(SHARE_PARAM_LIST);
+      url.searchParams.delete(SHARE_PARAM_TOKEN);
+      url.searchParams.delete(SHARE_PARAM_ROLE);
+      url.hash = "";
+      window.history.replaceState(null, document.title, url.href);
+    } catch {
+      // URL-Bereinigung ist optional.
+    }
+  }
+
+  async function openEventNameDialog({ title, message, defaultName = "", confirmText = "Speichern" }) {
+    let inputValue = normalizeEventName(defaultName) || getNextEventName();
+
+    while (true) {
+      const result = await openDialog({
+        title,
+        message,
+        confirmText,
+        cancelText: "Abbrechen",
+        showCancel: true,
+        inputLabel: "Eventname",
+        inputValue,
+        inputPlaceholder: "Eventname",
+        inputMaxLength: MAX_EVENT_NAME_LENGTH,
+      });
+
+      if (result === false) return "";
+
+      const name = normalizeEventName(result);
+      if (name) return name;
+
+      inputValue = "";
+      showToast("Bitte gib einen Eventnamen ein.", "warning");
+    }
+  }
+
+  async function createAndSwitchToNewEvent(name = "") {
+    if (!(await prepareCurrentEventForNavigation())) return;
+
+    const event = createEventMeta({ name: normalizeEventName(name) || getNextEventName() });
+    state.events.items.push(event);
+    state.events.activeId = event.id;
+    saveEventRegistry();
+    resetRemoteListConnection();
+    resetStateToDefaults();
+    clearForm();
+    saveLocalData();
+    renderApp();
+    showToast(`${event.name} gestartet. Vorherige Events bleiben gespeichert.`, "success");
+  }
+
+  async function switchToEvent(eventId, { silent = false } = {}) {
+    const targetEvent = findEventById(eventId);
+    if (!targetEvent) return false;
+    if (targetEvent.id === state.events.activeId) return true;
+    if (!(await prepareCurrentEventForNavigation())) return false;
+
+    state.events.activeId = targetEvent.id;
+    saveEventRegistry();
+    resetRemoteListConnection();
+    loadDataForActiveEvent();
+    clearForm();
+    renderApp();
+
+    if (targetEvent.listId) {
+      await connectActiveEventRemoteList(targetEvent);
+    }
+
+    if (!silent) {
+      showToast(`${targetEvent.name} geöffnet.`, "success");
+    }
+
+    return true;
+  }
+
+  async function prepareCurrentEventForNavigation() {
+    const data = createPersistedData();
+    if (!saveCurrentDataSnapshot(data)) {
+      showToast("Aktuelles Event konnte nicht gespeichert werden.", "danger");
+      return false;
+    }
+
+    if (canWriteRemoteList() && !state.remote.applyingRemote) {
+      window.clearTimeout(state.remote.saveTimer);
+      state.remote.saveTimer = 0;
+      await writeRemoteStateNow();
+    }
+
+    return true;
+  }
+
+  async function connectActiveEventRemoteList(event) {
+    const listId = sanitizeShareToken(event?.listId, 128);
+    if (!listId) return false;
+
+    await waitForFirebaseInitialization();
+    if (!state.remote.configured) {
+      updateAccessUi();
+      return false;
+    }
+    if (!(await ensureFirebaseReady())) return false;
+
+    const uid = state.remote.user?.uid || "";
+    if (uid && await connectOwnedSharedList(listId, uid)) {
+      return true;
+    }
+
+    showToast("Event lokal geladen. Firebase-Besitzerzugriff wurde nicht gefunden.", "warning");
+    updateAccessUi();
+    return false;
+  }
+
+  function resetRemoteListConnection() {
+    if (typeof state.remote.unsubscribe === "function") {
+      state.remote.unsubscribe();
+    }
+
+    window.clearTimeout(state.remote.saveTimer);
+    state.remote.listId = "";
+    state.remote.token = "";
+    state.remote.readToken = "";
+    state.remote.editToken = "";
+    state.remote.shareKey = "";
+    state.remote.role = "local";
+    state.remote.canWrite = true;
+    state.remote.openedFromShareLink = false;
+    state.remote.unsubscribe = null;
+    state.remote.applyingRemote = false;
+    state.remote.saveTimer = 0;
+    state.remote.saving = false;
+    state.remote.saveQueued = false;
+    state.remote.pendingFullReplace = false;
+    state.remote.pendingDeletedTicketIds.clear();
+    updateAccessUi();
+  }
+
+  function loadDataForActiveEvent() {
+    resetStateToDefaults();
+
+    const rawData = getStoredData();
+    if (!rawData) return;
+
+    try {
+      applyPersistedData(JSON.parse(rawData));
+      saveLocalData();
+    } catch {
+      resetStateToDefaults();
+    }
+  }
+
+  function getUniqueEventId(value, usedIds) {
+    let eventId = sanitizeEventId(value);
+
+    if (!eventId || usedIds.has(eventId)) {
+      do {
+        eventId = createEventId();
+      } while (usedIds.has(eventId));
+    }
+
+    usedIds.add(eventId);
+    return eventId;
+  }
+
+  function createEventId() {
+    return createShareId("evt", 14);
+  }
+
+  function sanitizeEventId(value) {
+    const text = String(value || "").trim();
+    return /^evt_[A-Za-z0-9_-]{14}$/.test(text) ? text : "";
+  }
+
+  function normalizeEventName(value) {
+    return normalizeStoredText(value, MAX_EVENT_NAME_LENGTH);
+  }
+
+  function normalizeTimestamp(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.trunc(number) : fallback;
+  }
+
   function migrateLegacyRemoteSession() {
     const rawSession = safeStorageGet(localStorage, LEGACY_REMOTE_SESSION_STORAGE_KEY, 4096);
 
@@ -471,6 +1019,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     els.importCsvBtn.addEventListener("click", openCsvImportPicker);
     els.csvImportInput.addEventListener("change", handleCsvImportChange);
     els.resetBtn.addEventListener("click", resetAllData);
+    els.eventSelect?.addEventListener("change", handleEventSelectionChange);
+    els.newEventBtn?.addEventListener("click", handleNewEventClick);
+    els.renameEventBtn?.addEventListener("click", handleRenameEventClick);
+    els.deleteEventBtn?.addEventListener("click", handleDeleteEventClick);
     els.shareBtn?.addEventListener("click", handleShareButtonClick);
     els.shareModeRead?.addEventListener("change", updateShareDialogLink);
     els.shareModeEdit?.addEventListener("change", updateShareDialogLink);
@@ -671,7 +1223,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     exportTicketsAsCsv(selectedTickets, {
-      filePrefix: "ausgewaehlte-tickets",
+      filePrefix: "ausgewählte-tickets",
       successMessage: `${formatTicketCount(selectedTickets.length)} als CSV-Datei exportiert.`,
       emptyMessage: "Keine Tickets ausgewählt.",
     });
@@ -850,6 +1402,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   function renderApp() {
     syncSelectedTickets();
+    renderEventSelector();
     renderTable();
     updateStats();
     updateLimitState();
@@ -1675,6 +2228,10 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     showCancel = false,
     variant = "info",
     preferenceKey = "",
+    inputLabel = "",
+    inputValue = "",
+    inputPlaceholder = "",
+    inputMaxLength = 0,
   } = {}) {
     const canRememberDialog = isKnownDialogKey(preferenceKey);
     if (canRememberDialog && isDialogSuppressed(preferenceKey)) {
@@ -1683,10 +2240,23 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
     closeDialog(false, { silent: true });
 
+    const hasInput = Boolean(els.dialogInput && els.dialogInputRow && inputLabel);
     els.dialogTitle.textContent = String(title).slice(0, 80);
     els.dialogMessage.textContent = String(message).slice(0, 220);
     els.dialogConfirmBtn.textContent = String(confirmText).slice(0, 30);
     els.dialogCancelBtn.textContent = String(cancelText).slice(0, 30);
+    if (els.dialogInputRow) {
+      els.dialogInputRow.hidden = !hasInput;
+    }
+    if (els.dialogInputLabel) {
+      els.dialogInputLabel.textContent = String(inputLabel).slice(0, 40);
+    }
+    if (els.dialogInput) {
+      els.dialogInput.value = hasInput ? String(inputValue).slice(0, MAX_EVENT_NAME_LENGTH) : "";
+      els.dialogInput.placeholder = hasInput ? String(inputPlaceholder).slice(0, 40) : "";
+      els.dialogInput.maxLength = Math.max(1, parseSafeInteger(inputMaxLength) || MAX_EVENT_NAME_LENGTH);
+      els.dialogInput.disabled = !hasInput;
+    }
     els.dialogCancelBtn.hidden = !showCancel;
     els.dialogSkipRow.hidden = !canRememberDialog;
     els.dialogSkipCheckbox.checked = false;
@@ -1699,6 +2269,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.dialogResolve = resolve;
       state.dialogReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       state.dialogPreferenceKey = canRememberDialog ? preferenceKey : "";
+      state.dialogInputEnabled = hasInput;
       els.dialogBackdrop.classList.remove("open");
       els.dialogBackdrop.hidden = false;
       document.body.classList.add("modal-open");
@@ -1706,7 +2277,12 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
       requestAnimationFrame(() => {
         els.dialogBackdrop.classList.add("open");
-        (showCancel ? els.dialogCancelBtn : els.dialogConfirmBtn).focus();
+        if (hasInput) {
+          els.dialogInput.focus();
+          els.dialogInput.select();
+        } else {
+          (showCancel ? els.dialogCancelBtn : els.dialogConfirmBtn).focus();
+        }
       });
     });
   }
@@ -1717,10 +2293,21 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     const resolver = state.dialogResolve;
     const returnFocus = state.dialogReturnFocus;
     const preferenceKey = state.dialogPreferenceKey;
+    const inputEnabled = state.dialogInputEnabled;
+    const dialogInputValue = inputEnabled ? (els.dialogInput?.value || "") : "";
+    const resolverResult = result && inputEnabled ? dialogInputValue : result;
     const shouldSuppress = Boolean(result && preferenceKey && els.dialogSkipCheckbox.checked);
     state.dialogResolve = null;
     state.dialogReturnFocus = null;
     state.dialogPreferenceKey = "";
+    state.dialogInputEnabled = false;
+    if (els.dialogInputRow) {
+      els.dialogInputRow.hidden = true;
+    }
+    if (els.dialogInput) {
+      els.dialogInput.value = "";
+      els.dialogInput.disabled = true;
+    }
     els.dialogSkipCheckbox.checked = false;
     els.dialogSkipCheckbox.disabled = true;
     els.dialogBackdrop.classList.remove("open");
@@ -1741,7 +2328,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
         suppressDialog(preferenceKey);
       }
 
-      resolver(result);
+      resolver(resolverResult);
     }
   }
 
@@ -1759,6 +2346,12 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     if (event.key === "Escape") {
       event.preventDefault();
       closeDialog(false);
+      return;
+    }
+
+    if (event.key === "Enter" && state.dialogInputEnabled && document.activeElement === els.dialogInput) {
+      event.preventDefault();
+      closeDialog(true);
       return;
     }
 
@@ -1858,6 +2451,26 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   async function initFirebaseAndMaybeOpenSharedList() {
     state.remote.baseUrl = normalizeBaseUrl(appConfig?.baseUrl) || getCurrentBaseUrl();
 
+    if (isLocalFileUrl()) {
+      state.remote.configured = false;
+      updateAccessUi();
+      if (getShareParamsFromUrl()) {
+        showToast("Share-Links brauchen Firebase und funktionieren lokal nur über einen Webserver.", "warning");
+      }
+      return;
+    }
+
+    if (!(await loadFirebaseRuntime())) {
+      state.remote.configured = false;
+      updateAccessUi();
+      if (getShareParamsFromUrl()) {
+        showToast("Firebase konnte nicht geladen werden.", "warning");
+      }
+      return;
+    }
+
+    state.remote.baseUrl = normalizeBaseUrl(appConfig?.baseUrl) || getCurrentBaseUrl();
+
     if (!isFirebaseConfigured()) {
       state.remote.configured = false;
       updateAccessUi();
@@ -1889,6 +2502,44 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.configured = false;
       updateAccessUi();
     }
+  }
+
+  async function loadFirebaseRuntime() {
+    if (initializeApp && getAuth && getDatabase && dbRef) return true;
+    if (isLocalFileUrl()) return false;
+
+    if (!firebaseRuntimeLoadPromise) {
+      firebaseRuntimeLoadPromise = Promise.all([
+        import("./firebase-config.js"),
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`),
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`),
+        import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-database.js`),
+      ]).then(([configModule, appModule, authModule, databaseModule]) => {
+        firebaseConfig = configModule.firebaseConfig || null;
+        appConfig = configModule.appConfig || {};
+        initializeApp = appModule.initializeApp;
+        getAuth = authModule.getAuth;
+        signInAnonymously = authModule.signInAnonymously;
+        getDatabase = databaseModule.getDatabase;
+        dbRef = databaseModule.ref;
+        dbSet = databaseModule.set;
+        dbUpdate = databaseModule.update;
+        dbGet = databaseModule.get;
+        onValue = databaseModule.onValue;
+        runTransaction = databaseModule.runTransaction;
+        return true;
+      }).catch((error) => {
+        console.error("Firebase-Module konnten nicht geladen werden:", error);
+        firebaseRuntimeLoadPromise = null;
+        return false;
+      });
+    }
+
+    return firebaseRuntimeLoadPromise;
+  }
+
+  function isLocalFileUrl() {
+    return window.location.protocol === "file:";
   }
 
   function isFirebaseConfigured() {
@@ -1968,6 +2619,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   async function joinSharedListFromUrl({ listId, token, role }) {
     if (!(await ensureFirebaseReady())) return;
+    if (!(await prepareCurrentEventForNavigation())) return;
 
     const canWrite = role === SHARE_ROLE_EDIT;
     const shareKey = getShareKey({ listId, token, role });
@@ -1980,6 +2632,9 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       const ownerTokens = isOwner ? await loadShareTokensForOwner(listId) : null;
       const readToken = ownerTokens?.readToken || (role === SHARE_ROLE_READ ? token : "");
       const editToken = ownerTokens?.editToken || (role === SHARE_ROLE_EDIT ? token : "");
+      resetRemoteListConnection();
+      activateEventForRemoteList(listId);
+      loadDataForActiveEvent();
       state.remote.listId = listId;
       state.remote.token = isOwner ? (editToken || token) : token;
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
@@ -2035,12 +2690,16 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
 
   async function restoreOwnedSharedListFromLocalSession() {
     const session = loadOwnerRemoteSession();
-    const cachedListIds = loadCachedSharedListIds();
-    if (!session && cachedListIds.length === 0) return false;
+    const activeEvent = getActiveEvent();
+    const cachedListIds = !activeEvent?.listId && state.events.items.length === 1
+      ? loadCachedSharedListIds()
+      : [];
+    if (!activeEvent?.listId && !session && cachedListIds.length === 0) return false;
     if (!(await ensureFirebaseReady())) return false;
 
     const uid = state.remote.user?.uid || "";
-    if (session?.authUid === uid && await connectOwnedSharedList(session.listId, uid)) {
+
+    if (activeEvent?.listId && await connectOwnedSharedList(activeEvent.listId, uid)) {
       return true;
     }
 
@@ -2048,10 +2707,18 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       clearOwnerRemoteSession();
     }
 
-    for (const listId of cachedListIds) {
-      if (listId === session?.listId) continue;
-      if (await connectOwnedSharedList(listId, uid)) {
-        return true;
+    if (!activeEvent?.listId && session?.authUid === uid && await connectOwnedSharedList(session.listId, uid)) {
+      linkActiveEventToRemoteList(session.listId);
+      return true;
+    }
+
+    if (!activeEvent?.listId && state.events.items.length === 1) {
+      for (const listId of cachedListIds) {
+        if (listId === session?.listId) continue;
+        if (await connectOwnedSharedList(listId, uid)) {
+          linkActiveEventToRemoteList(listId);
+          return true;
+        }
       }
     }
 
@@ -2073,6 +2740,7 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     state.remote.role = SHARE_ROLE_OWNER;
     state.remote.canWrite = true;
     state.remote.openedFromShareLink = false;
+    linkActiveEventToRemoteList(listId);
     saveOwnerRemoteSession({ listId, authUid: uid });
     subscribeToSharedList(listId);
     updateAccessUi();
@@ -2099,6 +2767,20 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
     }
 
     return listIds;
+  }
+
+  function hasAnyEventDataSnapshot() {
+    try {
+      for (let index = 0; index < localStorage.length; index += 1) {
+        if ((localStorage.key(index) || "").startsWith(EVENT_DATA_PREFIX)) {
+          return true;
+        }
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
   }
 
   function createShareTokenBundle(createdAt = Date.now()) {
@@ -2201,6 +2883,8 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
       state.remote.openedFromShareLink = false;
+      linkActiveEventToRemoteList(listId);
+      saveSharedData(listId, initialState);
       saveOwnerRemoteSession({ listId, authUid: uid });
       subscribeToSharedList(listId);
       showToast("Geteilte Ticketliste erstellt.", "success");
@@ -2775,25 +3459,41 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   }
 
   function saveLocalData(data = createPersistedData()) {
-    return safeStorageSet(localStorage, STORAGE_KEY, JSON.stringify(data));
+    const activeEvent = getActiveEvent();
+    const payload = JSON.stringify(data);
+    const eventSaved = activeEvent
+      ? safeStorageSet(localStorage, `${EVENT_DATA_PREFIX}${activeEvent.id}`, payload)
+      : true;
+    const legacyCurrentSaved = safeStorageSet(localStorage, STORAGE_KEY, payload);
+
+    if (activeEvent) {
+      activeEvent.updatedAt = Date.now();
+      saveEventRegistry();
+    }
+
+    return eventSaved && legacyCurrentSaved;
   }
 
   function saveSharedData(listId, data = createPersistedData()) {
     const safeListId = sanitizeShareToken(listId, 128);
     if (!safeListId) return false;
-    return safeStorageSet(localStorage, `${SHARED_STORAGE_PREFIX}${safeListId}`, JSON.stringify(data));
+    const payload = JSON.stringify(data);
+    const sharedSaved = safeStorageSet(localStorage, `${SHARED_STORAGE_PREFIX}${safeListId}`, payload);
+    const activeEvent = getActiveEvent();
+    const eventSaved = activeEvent?.listId === safeListId
+      ? safeStorageSet(localStorage, `${EVENT_DATA_PREFIX}${activeEvent.id}`, payload)
+      : true;
+
+    if (activeEvent?.listId === safeListId) {
+      activeEvent.updatedAt = Date.now();
+      saveEventRegistry();
+    }
+
+    return sharedSaved && eventSaved;
   }
 
   function loadData() {
-    const rawData = getStoredData();
-    if (!rawData) return;
-
-    try {
-      applyPersistedData(JSON.parse(rawData));
-      saveLocalData();
-    } catch {
-      resetStateToDefaults();
-    }
+    loadDataForActiveEvent();
   }
 
   function applyPersistedData(parsed) {
@@ -2895,6 +3595,19 @@ import { getDatabase, ref as dbRef, set as dbSet, update as dbUpdate, get as dbG
   }
 
   function getStoredData() {
+    const activeEvent = getActiveEvent();
+    if (activeEvent) {
+      const eventData = safeStorageGet(localStorage, `${EVENT_DATA_PREFIX}${activeEvent.id}`);
+      if (eventData) return eventData;
+
+      if (activeEvent.listId) {
+        const sharedData = safeStorageGet(localStorage, `${SHARED_STORAGE_PREFIX}${activeEvent.listId}`);
+        if (sharedData) return sharedData;
+      }
+
+      if (hasAnyEventDataSnapshot()) return null;
+    }
+
     const current = safeStorageGet(localStorage, STORAGE_KEY);
     if (current) return current;
 

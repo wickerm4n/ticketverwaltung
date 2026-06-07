@@ -1,32 +1,44 @@
 # Ticketverwaltung
 
-Eine Web-App zur Verwaltung von Event- und Menü-Tickets.
+Eine kleine Übersicht für Event- und Menü-Tickets in der RP-Community.
 
-## Funktionen
+## Was kann das Tool?
 
-- Tickets erstellen, bearbeiten, suchen und löschen
-- Ticketnummer, Vorname, Nachname, Telefonnummer, Tickettyp, Menü und Preis verwalten
-- mehrere Tickets markieren und gesammelt löschen
-- ausgewählte Tickets oder die komplette Liste als CSV-Datei exportieren
-- Ticketdaten per CSV importieren
-- Share-Link für geteilte Ticketlisten erstellen
-- Read-only-Link für reine Ansicht
-- Edit-Link für gemeinsames Bearbeiten
-- automatische Synchronisierung geteilter Listen über Firebase
-- Hinweisbenachrichtigungen und optionale Bestätigungsdialoge
+- Tickets für ein Event eintragen und bearbeiten
+- Namen, Telefonnummern, Ticketart, Menü und Preis speichern
+- nach Personen oder Tickets suchen
+- normale Tickets und VIP-Tickets unterscheiden
+- sehen, wie viele Plätze schon vergeben sind
+- Einnahmen automatisch zusammenrechnen
+- Tickets einzeln oder gesammelt löschen
+- die Liste als CSV-Datei exportieren
+- vorhandene Ticketlisten aus einer CSV-Datei importieren
 
-## Aufrufen
+## Mehrere Events
+
+Oben im Tool kann zwischen Events gewechselt werden. Jedes Event hat seine eigene Ticketliste.
+
+Neue Events werden mit dem Plus-Button erstellt. Der Name kann direkt beim Erstellen vergeben und später über den Stift-Button geändert werden.
+
+Ein Event kann auch aus der lokalen Auswahl gelöscht werden. Geteilte Links zu alten Events bleiben dabei weiterhin abrufbar.
+
+## Teilen
+
+Über das Teilen-Symbol kann ein Link für das aktuelle Event erstellt werden.
+
+- **Read-only:** andere können die Liste nur ansehen.
+- **Editierbar:** andere können Tickets hinzufügen, ändern und löschen.
+
+Jedes Event hat einen eigenen Share-Link. Ein Link zu einem alten Event zeigt also weiterhin nur dieses alte Event und nicht die neuen Events.
+
+## Lokal nutzen
+
+Die `index.html` kann auch direkt auf dem eigenen PC im Browser geöffnet werden. Dann funktionieren Ticket-Eingabe, Events, Suche sowie CSV-Import und CSV-Export lokal.
+
+Share-Links funktionieren nur, wenn das Tool online geöffnet wird, zum Beispiel über GitHub Pages.
+
+## Link
 
 ```text
 https://wickerm4n.github.io/ticketverwaltung/
 ```
-
-## Teilen
-
-Über das Teilen-Symbol im Header kann ein Link für die aktuelle Ticketliste erstellt werden.
-
-- **Read-only:** andere Personen können die Liste ansehen, aber nicht ändern.
-- **Editierbar:** andere Personen können Tickets hinzufügen, bearbeiten und löschen.
-
-Geteilte Ticketlisten sind nur für Personen bestimmt, die den jeweiligen Share-Link erhalten haben.
-Wenn du die App später im selben Browser wieder öffnest, arbeitet sie mit derselben geteilten Liste weiter.
