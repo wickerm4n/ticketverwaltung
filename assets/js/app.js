@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.06.07.10";
+  const APP_VERSION = "2026.06.07.12";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -45,6 +45,7 @@
   const SHARE_SCOPE_ALL = "all";
   const SHARE_ROLE_READ = "reader";
   const SHARE_ROLE_EDIT = "editor";
+  const SHARE_ROLE_MANAGER = "manager";
   const SHARE_ROLE_OWNER = "owner";
   const SHARE_TOKEN_LENGTH = 24;
   const SHARE_LIST_ID_LENGTH = 18;
@@ -157,6 +158,7 @@
     shareModeRead: document.querySelector("#shareModeRead"),
     shareModeEdit: document.querySelector("#shareModeEdit"),
     shareAllEventsToggle: document.querySelector("#shareAllEventsToggle"),
+    shareManageEventsToggle: document.querySelector("#shareManageEventsToggle"),
     shareLinkInput: document.querySelector("#shareLinkInput"),
     shareRotateBtn: document.querySelector("#shareRotateBtn"),
     shareCopyBtn: document.querySelector("#shareCopyBtn"),
@@ -692,6 +694,20 @@
     activeEvent.name = nextName;
     activeEvent.updatedAt = Date.now();
 
+    if (canManageSharedBundleEvents()) {
+      const renamed = await writeSharedBundleLinksFromCurrentEvents();
+      if (!renamed) {
+        activeEvent.name = previousName;
+        activeEvent.updatedAt = Date.now();
+        showToast("Eventname konnte nicht remote gespeichert werden.", "danger");
+        renderEventSelector();
+        return;
+      }
+      renderEventSelector();
+      showToast("Event umbenannt.", "success");
+      return;
+    }
+
     if (!saveEventRegistry()) {
       const currentEvent = getActiveEvent();
       if (currentEvent) {
@@ -737,6 +753,9 @@
 
   async function deleteActiveEvent() {
     if (!guardEventManagementAccess()) return false;
+    if (canManageSharedBundleEvents()) {
+      return deleteActiveSharedBundleEvent();
+    }
 
     const activeEvent = getActiveEvent();
     if (!activeEvent) return false;
@@ -939,6 +958,8 @@
     state.remote.bundleToken = "";
     state.remote.bundleReadToken = "";
     state.remote.bundleEditToken = "";
+    state.remote.bundleManageToken = "";
+    state.remote.canManageEvents = false;
     state.remote.sharedEventAccess = {};
     state.remote.unsubscribe = null;
     state.remote.applyingRemote = false;
@@ -1101,6 +1122,7 @@
     els.shareModeRead?.addEventListener("change", handleShareDialogOptionChange);
     els.shareModeEdit?.addEventListener("change", handleShareDialogOptionChange);
     els.shareAllEventsToggle?.addEventListener("change", handleShareDialogOptionChange);
+    els.shareManageEventsToggle?.addEventListener("change", handleShareDialogOptionChange);
     els.shareRotateBtn?.addEventListener("click", rotateShareLinks);
     els.shareCopyBtn?.addEventListener("click", copyShareLinkFromDialog);
     els.shareCloseBtn?.addEventListener("click", closeShareDialog);
@@ -2507,12 +2529,14 @@
       shareKey: "",
       role: "local",
       canWrite: true,
+      canManageEvents: true,
       openedFromShareLink: false,
       shareScope: SHARE_SCOPE_EVENT,
       bundleId: "",
       bundleToken: "",
       bundleReadToken: "",
       bundleEditToken: "",
+      bundleManageToken: "",
       sharedEventAccess: {},
       unsubscribe: null,
       initPromise: null,
@@ -2679,7 +2703,9 @@
   function getShareParamsFromSearchParams(params) {
     const token = sanitizeShareToken(params.get(SHARE_PARAM_TOKEN), 256);
     const rawRole = String(params.get(SHARE_PARAM_ROLE) || "read").toLowerCase();
-    const role = rawRole === "edit" || rawRole === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ;
+    const role = rawRole === "manage" || rawRole === "admin" || rawRole === SHARE_ROLE_MANAGER
+      ? SHARE_ROLE_MANAGER
+      : (rawRole === "edit" || rawRole === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
     const rawScope = String(params.get(SHARE_PARAM_SCOPE) || SHARE_SCOPE_EVENT).toLowerCase();
     const scope = rawScope === SHARE_SCOPE_ALL ? SHARE_SCOPE_ALL : SHARE_SCOPE_EVENT;
     const eventName = normalizeEventName(params.get(SHARE_PARAM_EVENT));
@@ -2727,10 +2753,11 @@
     if (!(await ensureFirebaseReady())) return;
     if (!(await prepareCurrentEventForNavigation())) return;
 
-    const canWrite = role === SHARE_ROLE_EDIT;
+    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
+    const memberRole = role === SHARE_ROLE_MANAGER ? SHARE_ROLE_EDIT : role;
     const shareKey = getShareKey({ scope: SHARE_SCOPE_EVENT, listId, token, role });
     const uid = state.remote.user.uid;
-    const memberData = createMemberData({ role, canWrite, token, joinedAt: Date.now() });
+    const memberData = createMemberData({ role: memberRole, canWrite, token, joinedAt: Date.now() });
 
     try {
       await dbSet(dbRef(state.remote.db, `members/${listId}/${uid}`), memberData);
@@ -2744,6 +2771,7 @@
       state.remote.token = isOwner ? (editToken || token) : token;
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
       state.remote.canWrite = isOwner || canWrite;
+      state.remote.canManageEvents = isOwner;
       state.remote.openedFromShareLink = true;
       state.remote.shareScope = SHARE_SCOPE_EVENT;
       state.remote.shareKey = shareKey;
@@ -2754,7 +2782,7 @@
         saveOwnerRemoteSession({ listId, authUid: uid });
       }
       subscribeToSharedList(listId);
-      replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read", eventName);
+      replaceLegacyShareQueryWithHash(listId, token, role === SHARE_ROLE_MANAGER ? "manage" : (canWrite ? "edit" : "read"), eventName);
       showToast(state.remote.canWrite ? "Editierbarer Share-Link geöffnet." : "Read-only-Share-Link geöffnet.", "success");
       updateAccessUi();
     } catch (error) {
@@ -2770,7 +2798,7 @@
 
     const safeBundleId = sanitizeShareBundleId(bundleId);
     const safeToken = sanitizeShareToken(token, 256);
-    const requestedRole = role === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ;
+    const requestedRole = role === SHARE_ROLE_MANAGER ? SHARE_ROLE_MANAGER : (role === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
     const shareKey = getShareKey({ scope: SHARE_SCOPE_ALL, bundleId: safeBundleId, token: safeToken, role: requestedRole });
 
     if (!safeBundleId || !safeToken) {
@@ -2793,11 +2821,18 @@
       const memberUpdates = {};
       bundle.events.forEach((event) => {
         memberUpdates[`members/${event.listId}/${uid}`] = createMemberData({
-          role: bundle.role,
+          role: event.memberRole || (bundle.canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ),
           canWrite: bundle.canWrite,
           token: event.token,
           joinedAt: Date.now(),
         });
+      });
+      memberUpdates[`bundleMembers/${safeBundleId}/${uid}`] = createBundleMemberData({
+        role: bundle.role,
+        canWrite: bundle.canWrite,
+        canManageEvents: bundle.canManageEvents,
+        token: safeToken,
+        joinedAt: Date.now(),
       });
       await dbUpdate(dbRef(state.remote.db), memberUpdates);
 
@@ -2818,13 +2853,14 @@
         bundleToken: safeToken,
         bundleRole: bundle.role,
         bundleCanWrite: bundle.canWrite,
+        bundleCanManageEvents: bundle.canManageEvents,
         shareKey,
         sharedEventAccess: bundle.accessByEventId,
       });
       loadDataForActiveEvent();
       subscribeToSharedList(activeAccess.listId);
-      replaceBundleShareQueryWithHash(safeBundleId, safeToken, bundle.canWrite ? "edit" : "read");
-      showToast(bundle.canWrite ? "Editierbarer Alle-Events-Share-Link geöffnet." : "Read-only-Alle-Events-Share-Link geöffnet.", "success");
+      replaceBundleShareQueryWithHash(safeBundleId, safeToken, bundle.canManageEvents ? "manage" : (bundle.canWrite ? "edit" : "read"));
+      showToast(bundle.canManageEvents ? "Alle-Events-Share-Link mit Event-Verwaltung geöffnet." : (bundle.canWrite ? "Editierbarer Alle-Events-Share-Link geöffnet." : "Read-only-Alle-Events-Share-Link geöffnet."), "success");
       updateAccessUi();
       renderApp();
     } catch (error) {
@@ -2835,13 +2871,14 @@
   }
 
   function normalizeShareBundleLink(value, requestedRole = SHARE_ROLE_READ) {
-    const linkRole = value?.role === SHARE_ROLE_EDIT && value?.canWrite === true
-      ? SHARE_ROLE_EDIT
-      : SHARE_ROLE_READ;
-    const role = requestedRole === SHARE_ROLE_EDIT && linkRole === SHARE_ROLE_EDIT
-      ? SHARE_ROLE_EDIT
-      : linkRole;
-    const canWrite = role === SHARE_ROLE_EDIT;
+    const hasManagerRights = value?.role === SHARE_ROLE_MANAGER && value?.canWrite === true && value?.canManageEvents === true;
+    const hasEditorRights = value?.role === SHARE_ROLE_EDIT && value?.canWrite === true;
+    const linkRole = hasManagerRights ? SHARE_ROLE_MANAGER : (hasEditorRights ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
+    const role = requestedRole === SHARE_ROLE_MANAGER && linkRole === SHARE_ROLE_MANAGER
+      ? SHARE_ROLE_MANAGER
+      : (requestedRole === SHARE_ROLE_EDIT && (linkRole === SHARE_ROLE_EDIT || linkRole === SHARE_ROLE_MANAGER) ? SHARE_ROLE_EDIT : linkRole);
+    const canManageEvents = role === SHARE_ROLE_MANAGER;
+    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
     const rawEvents = value?.events && typeof value.events === "object" && !Array.isArray(value.events)
       ? Object.entries(value.events)
       : [];
@@ -2853,7 +2890,10 @@
       .map(([key, event], index) => {
         const eventId = sanitizeEventId(event?.eventId) || sanitizeEventId(event?.id) || sanitizeEventId(key) || createEventId();
         const listId = sanitizeShareToken(event?.listId, 128);
-        const token = sanitizeShareToken(event?.token, 256);
+        const readToken = sanitizeShareToken(event?.readToken, 256);
+        const editToken = sanitizeShareToken(event?.editToken, 256);
+        const fallbackToken = sanitizeShareToken(event?.token, 256);
+        const token = canWrite ? (editToken || fallbackToken) : (readToken || fallbackToken);
         if (!eventId || !listId || !token || seenEventIds.has(eventId) || seenListIds.has(listId)) return null;
         seenEventIds.add(eventId);
         seenListIds.add(listId);
@@ -2862,11 +2902,15 @@
           name: normalizeEventName(event?.name) || `Event ${index + 1}`,
           listId,
           token,
+          readToken: readToken || (!canWrite ? token : ""),
+          editToken: editToken || (canWrite ? token : ""),
           order: Math.max(0, parseSafeInteger(event?.order) || index),
           createdAt,
           updatedAt: normalizeTimestamp(event?.updatedAt, createdAt),
           canWrite,
+          canManageEvents,
           role,
+          memberRole: canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ,
         };
       })
       .filter(Boolean)
@@ -2879,13 +2923,17 @@
         eventId: event.eventId,
         listId: event.listId,
         token: event.token,
+        readToken: event.readToken,
+        editToken: event.editToken,
         role,
+        memberRole: event.memberRole,
         canWrite,
+        canManageEvents,
       };
     });
 
-    return { role, canWrite, events, accessByEventId };
-  }
+    return { role, canWrite, canManageEvents, events, accessByEventId };
+}
 
   function getSharedBundleContext() {
     return {
@@ -2910,14 +2958,16 @@
     state.remote.token = access.token;
     state.remote.readToken = access.canWrite ? "" : access.token;
     state.remote.editToken = access.canWrite ? access.token : "";
-    state.remote.role = access.canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ;
+    state.remote.role = access.role || (access.canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
     state.remote.canWrite = Boolean(access.canWrite);
+    state.remote.canManageEvents = Boolean(access.canManageEvents);
     state.remote.openedFromShareLink = true;
     state.remote.shareScope = SHARE_SCOPE_ALL;
     state.remote.bundleId = context.bundleId || state.remote.bundleId;
     state.remote.bundleToken = context.bundleToken || state.remote.bundleToken;
     state.remote.bundleReadToken = context.bundleCanWrite ? "" : (context.bundleToken || state.remote.bundleReadToken);
     state.remote.bundleEditToken = context.bundleCanWrite ? (context.bundleToken || state.remote.bundleEditToken) : "";
+    state.remote.bundleManageToken = context.bundleCanManageEvents ? (context.bundleToken || state.remote.bundleManageToken) : (context.bundleManageToken || state.remote.bundleManageToken || "");
     state.remote.shareKey = context.shareKey || state.remote.shareKey;
     state.remote.sharedEventAccess = { ...(context.sharedEventAccess || state.remote.sharedEventAccess || {}) };
     return true;
@@ -3144,6 +3194,16 @@
     };
   }
 
+  function createBundleMemberData({ role, canWrite, canManageEvents = false, token, joinedAt = Date.now() }) {
+    return {
+      role,
+      canWrite: Boolean(canWrite),
+      canManageEvents: Boolean(canManageEvents),
+      token,
+      joinedAt,
+    };
+  }
+
   function createOwnerMemberData(token, joinedAt = Date.now()) {
     return createMemberData({
       role: SHARE_ROLE_OWNER,
@@ -3188,9 +3248,11 @@
       state.remote.bundleToken = "";
       state.remote.bundleReadToken = "";
       state.remote.bundleEditToken = "";
+      state.remote.bundleManageToken = "";
       state.remote.sharedEventAccess = {};
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
+      state.remote.canManageEvents = true;
       state.remote.openedFromShareLink = false;
       linkActiveEventToRemoteList(listId);
       saveSharedData(listId, initialState);
@@ -3213,7 +3275,7 @@
       return false;
     }
 
-    if (!force && state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken) {
+    if (!force && state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken && state.remote.bundleManageToken) {
       return true;
     }
 
@@ -3254,8 +3316,10 @@
     const bundleId = createShareId("bun", SHARE_BUNDLE_ID_LENGTH);
     const readBundleToken = createShareId("br", SHARE_TOKEN_LENGTH);
     const editBundleToken = createShareId("be", SHARE_TOKEN_LENGTH);
+    const manageBundleToken = createShareId("ba", SHARE_TOKEN_LENGTH);
     const readEvents = {};
     const editEvents = {};
+    const manageEvents = {};
 
     remoteEvents.forEach((remoteEvent, index) => {
       const base = {
@@ -3265,8 +3329,9 @@
         order: index,
         updatedAt: normalizeTimestamp(remoteEvent.event.updatedAt, now),
       };
-      readEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.readToken };
-      editEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.editToken };
+      readEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.readToken, readToken: remoteEvent.readToken };
+      editEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.editToken, editToken: remoteEvent.editToken };
+      manageEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.editToken, readToken: remoteEvent.readToken, editToken: remoteEvent.editToken };
     });
 
     const bundleData = {
@@ -3280,6 +3345,7 @@
         [readBundleToken]: {
           role: SHARE_ROLE_READ,
           canWrite: false,
+          canManageEvents: false,
           createdAt: now,
           appVersion: APP_VERSION,
           events: readEvents,
@@ -3287,9 +3353,18 @@
         [editBundleToken]: {
           role: SHARE_ROLE_EDIT,
           canWrite: true,
+          canManageEvents: false,
           createdAt: now,
           appVersion: APP_VERSION,
           events: editEvents,
+        },
+        [manageBundleToken]: {
+          role: SHARE_ROLE_MANAGER,
+          canWrite: true,
+          canManageEvents: true,
+          createdAt: now,
+          appVersion: APP_VERSION,
+          events: manageEvents,
         },
       },
     };
@@ -3299,6 +3374,7 @@
       state.remote.bundleId = bundleId;
       state.remote.bundleReadToken = readBundleToken;
       state.remote.bundleEditToken = editBundleToken;
+      state.remote.bundleManageToken = manageBundleToken;
       state.remote.bundleToken = editBundleToken;
       saveEventRegistry();
       showToast("Alle-Events-Share-Link vorbereitet.", "success");
@@ -3376,6 +3452,157 @@
     saveEventDataSnapshot(event, safeData, listId);
 
     return { event, listId, readToken, editToken, order: index };
+  }
+
+  function buildBundleEventsFromAccess(role) {
+    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
+    const events = {};
+    state.events.items.slice(0, MAX_EVENTS).forEach((event, index) => {
+      const access = getSharedEventAccess(event.id);
+      const readToken = sanitizeShareToken(access?.readToken, 256);
+      const editToken = sanitizeShareToken(access?.editToken || access?.token, 256);
+      const token = canWrite ? editToken : readToken;
+      if (!event?.id || !event.listId || !token) return;
+      const base = {
+        eventId: event.id,
+        name: normalizeEventName(event.name) || `Event ${index + 1}`,
+        listId: event.listId,
+        token,
+        order: index,
+        updatedAt: normalizeTimestamp(event.updatedAt, Date.now()),
+      };
+      if (role === SHARE_ROLE_READ) {
+        base.readToken = readToken || token;
+      } else if (role === SHARE_ROLE_EDIT) {
+        base.editToken = editToken || token;
+      } else {
+        base.readToken = readToken;
+        base.editToken = editToken || token;
+      }
+      events[event.id] = base;
+    });
+    return events;
+  }
+
+  async function writeSharedBundleLinksFromCurrentEvents() {
+    if (!canManageSharedBundleEvents()) return false;
+    const bundleId = sanitizeShareBundleId(state.remote.bundleId);
+    const now = Date.now();
+    if (!bundleId) return false;
+
+    const updates = {};
+    if (state.remote.bundleReadToken) {
+      updates[`shareBundles/${bundleId}/links/${state.remote.bundleReadToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_READ);
+    }
+    if (state.remote.bundleEditToken) {
+      updates[`shareBundles/${bundleId}/links/${state.remote.bundleEditToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_EDIT);
+    }
+    if (state.remote.bundleManageToken || state.remote.bundleToken) {
+      updates[`shareBundles/${bundleId}/links/${state.remote.bundleManageToken || state.remote.bundleToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_MANAGER);
+    }
+    updates[`shareBundles/${bundleId}/meta/updatedAt`] = now;
+    updates[`shareBundles/${bundleId}/meta/appVersion`] = APP_VERSION;
+
+    try {
+      await dbUpdate(dbRef(state.remote.db), updates);
+      state.remote.sharedEventAccess = { ...(state.remote.sharedEventAccess || {}) };
+      renderEventSelector();
+      return true;
+    } catch (error) {
+      console.error("Event-Verwaltung konnte nicht im Share-Bundle gespeichert werden:", error);
+      showToast(formatFirebaseErrorMessage(error, "Event-Verwaltung konnte nicht gespeichert werden."), "danger");
+      return false;
+    }
+  }
+
+  async function createAndSwitchToNewSharedBundleEvent(name = "") {
+    if (!canManageSharedBundleEvents()) return false;
+    if (state.events.items.length >= MAX_EVENTS) {
+      showToast(`Maximal ${MAX_EVENTS} Events möglich.`, "warning");
+      return false;
+    }
+    if (!(await prepareCurrentEventForNavigation())) return false;
+
+    const uid = state.remote.user?.uid || "";
+    const event = createEventMeta({ name: normalizeEventName(name) || getNextEventName() });
+    const data = normalizePersistedData(null);
+
+    try {
+      const remoteEvent = await createRemoteListForEvent(event, data, uid, state.events.items.length);
+      if (!remoteEvent) return false;
+
+      state.events.items.push(event);
+      state.events.activeId = event.id;
+      state.remote.sharedEventAccess[event.id] = {
+        eventId: event.id,
+        listId: remoteEvent.listId,
+        token: remoteEvent.editToken,
+        readToken: remoteEvent.readToken,
+        editToken: remoteEvent.editToken,
+        role: SHARE_ROLE_MANAGER,
+        memberRole: SHARE_ROLE_EDIT,
+        canWrite: true,
+        canManageEvents: true,
+      };
+
+      const written = await writeSharedBundleLinksFromCurrentEvents();
+      if (!written) return false;
+
+      const context = getSharedBundleContext();
+      resetRemoteListConnection();
+      applySharedBundleRemoteAccess(state.remote.sharedEventAccess?.[event.id] || {
+        eventId: event.id,
+        listId: remoteEvent.listId,
+        token: remoteEvent.editToken,
+        readToken: remoteEvent.readToken,
+        editToken: remoteEvent.editToken,
+        role: SHARE_ROLE_MANAGER,
+        memberRole: SHARE_ROLE_EDIT,
+        canWrite: true,
+        canManageEvents: true,
+      }, context);
+      resetStateToDefaults();
+      clearForm();
+      subscribeToSharedList(remoteEvent.listId);
+      renderApp();
+      showToast(`${event.name} gestartet.`, "success");
+      return true;
+    } catch (error) {
+      console.error("Geteiltes Event konnte nicht erstellt werden:", error);
+      showToast(formatFirebaseErrorMessage(error, "Geteiltes Event konnte nicht erstellt werden."), "danger");
+      return false;
+    }
+  }
+
+  async function deleteActiveSharedBundleEvent() {
+    if (!canManageSharedBundleEvents()) return false;
+    const activeEvent = getActiveEvent();
+    if (!activeEvent) return false;
+    if (state.events.items.length <= 1) {
+      showToast("Das letzte freigegebene Event kann nicht gelöscht werden.", "warning");
+      return false;
+    }
+
+    const deletedIndex = Math.max(0, state.events.items.findIndex((event) => event.id === activeEvent.id));
+    const deletedId = activeEvent.id;
+    const context = getSharedBundleContext();
+    delete state.remote.sharedEventAccess[deletedId];
+    state.events.items = state.events.items.filter((event) => event.id !== deletedId);
+    const nextIndex = Math.min(deletedIndex, state.events.items.length - 1);
+    state.events.activeId = state.events.items[nextIndex]?.id || "";
+
+    const written = await writeSharedBundleLinksFromCurrentEvents();
+    if (!written) return false;
+
+    const nextAccess = getSharedEventAccess(state.events.activeId);
+    resetRemoteListConnection();
+    applySharedBundleRemoteAccess(nextAccess, context);
+    loadDataForActiveEvent();
+    clearForm();
+    subscribeToSharedList(nextAccess.listId);
+    renderApp();
+    showToast("Event aus dem Share-Link entfernt.", "success");
+    return true;
   }
 
   async function writePersistedDataToRemoteList(listId, data) {
@@ -3584,8 +3811,19 @@
     return false;
   }
 
+  function canManageSharedBundleEvents() {
+    return Boolean(
+      state.remote.openedFromShareLink
+      && state.remote.shareScope === SHARE_SCOPE_ALL
+      && state.remote.canManageEvents
+      && state.remote.bundleId
+      && state.remote.bundleToken
+    );
+  }
+
   function canManageCurrentEvents() {
     if (!state.remote.listId) return true;
+    if (canManageSharedBundleEvents()) return true;
     return state.remote.role === SHARE_ROLE_OWNER && !state.remote.openedFromShareLink;
   }
 
@@ -3596,7 +3834,7 @@
   }
 
   function canCreateAllEventsShare() {
-    return Boolean(state.remote.configured && state.remote.db && canManageCurrentEvents());
+    return Boolean(state.remote.configured && state.remote.db && canManageCurrentEvents() && !state.remote.openedFromShareLink);
   }
 
   function canPersistEventRegistry() {
@@ -3651,6 +3889,15 @@
       }
     }
 
+    if (els.shareManageEventsToggle) {
+      const canShareAll = canCreateAllEventsShare();
+      const canEnableManage = canShareAll && Boolean(els.shareAllEventsToggle?.checked) && Boolean(els.shareModeEdit?.checked);
+      els.shareManageEventsToggle.disabled = !canEnableManage;
+      if (!canEnableManage) {
+        els.shareManageEventsToggle.checked = false;
+      }
+    }
+
     if (els.shareStatus) {
       const statusText = getShareStatusText();
       els.shareStatus.textContent = statusText;
@@ -3679,6 +3926,7 @@
     if (state.remote.role === SHARE_ROLE_OWNER) {
       return "Geteilte Liste: Besitzerzugriff";
     }
+    if (state.remote.canManageEvents) return "Geteilte Liste: Event-Verwaltung erlaubt";
     if (state.remote.canWrite) return "Geteilte Liste: Bearbeiten erlaubt";
     return "Geteilte Liste: Nur ansehen";
   }
@@ -3725,6 +3973,10 @@
       els.shareAllEventsToggle.disabled = !canShareAll;
       els.shareAllEventsToggle.checked = false;
     }
+    if (els.shareManageEventsToggle) {
+      els.shareManageEventsToggle.disabled = true;
+      els.shareManageEventsToggle.checked = false;
+    }
     if (els.shareLinkInput) {
       els.shareLinkInput.disabled = !hasAnyToken;
       els.shareLinkInput.placeholder = hasAnyToken ? "" : "Keine Links geladen";
@@ -3767,8 +4019,27 @@
   }
 
   function handleShareDialogOptionChange(event) {
+    if (event?.target === els.shareManageEventsToggle && els.shareManageEventsToggle?.checked) {
+      if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = true;
+      if (els.shareModeEdit) els.shareModeEdit.checked = true;
+      if (els.shareModeRead) els.shareModeRead.checked = false;
+    }
+
+    if (event?.target === els.shareModeRead && els.shareModeRead?.checked && els.shareManageEventsToggle) {
+      els.shareManageEventsToggle.checked = false;
+    }
+
     const wantsAllEvents = Boolean(els.shareAllEventsToggle?.checked);
-    const forceRefreshBundle = event?.target === els.shareAllEventsToggle && wantsAllEvents;
+    const wantsManageEvents = Boolean(els.shareManageEventsToggle?.checked);
+    const forceRefreshBundle = event?.target === els.shareAllEventsToggle && wantsAllEvents && !state.remote.bundleId;
+
+    if (els.shareManageEventsToggle) {
+      const canEnableManage = wantsAllEvents && Boolean(els.shareModeEdit?.checked) && canCreateAllEventsShare();
+      els.shareManageEventsToggle.disabled = !canEnableManage;
+      if (!canEnableManage) {
+        els.shareManageEventsToggle.checked = false;
+      }
+    }
 
     if (!wantsAllEvents) {
       updateShareDialogLink();
@@ -3777,16 +4048,18 @@
 
     if (!canCreateAllEventsShare()) {
       if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = false;
+      if (els.shareManageEventsToggle) els.shareManageEventsToggle.checked = false;
       showToast("Alle-Events-Links können nur lokal oder als Besitzer erstellt werden.", "warning");
       updateShareDialogLink();
       return;
     }
 
-    if (!state.remote.bundleId || !state.remote.bundleReadToken || !state.remote.bundleEditToken || forceRefreshBundle) {
+    if (!state.remote.bundleId || !state.remote.bundleReadToken || !state.remote.bundleEditToken || !state.remote.bundleManageToken || forceRefreshBundle) {
       setShareDialogEmptyState("Alle vorhandenen Events werden für den Share-Link vorbereitet ...");
       void ensureAllEventsShareBundleForDialog({ force: forceRefreshBundle }).then((success) => {
-        if (!success && els.shareAllEventsToggle) {
-          els.shareAllEventsToggle.checked = false;
+        if (!success) {
+          if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = false;
+          if (els.shareManageEventsToggle) els.shareManageEventsToggle.checked = false;
         }
         updateShareDialogLink();
       });
@@ -3801,7 +4074,7 @@
 
     const useAllEvents = Boolean(els.shareAllEventsToggle?.checked && canCreateAllEventsShare());
     const hasSingleToken = Boolean(state.remote.readToken || state.remote.editToken);
-    const hasBundleToken = Boolean(state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken);
+    const hasBundleToken = Boolean(state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken && state.remote.bundleManageToken);
 
     if (useAllEvents && !hasBundleToken) {
       setShareDialogEmptyState("Alle vorhandenen Events werden für den Share-Link vorbereitet ...");
@@ -3815,7 +4088,8 @@
       return;
     }
 
-    let mode = els.shareModeEdit?.checked ? "edit" : "read";
+    const manageEvents = Boolean(useAllEvents && els.shareManageEventsToggle?.checked && els.shareModeEdit?.checked);
+    let mode = manageEvents ? "manage" : (els.shareModeEdit?.checked ? "edit" : "read");
     if (mode === "read" && !useAllEvents && !state.remote.readToken && state.remote.editToken) {
       mode = "edit";
       if (els.shareModeEdit) els.shareModeEdit.checked = true;
@@ -3823,7 +4097,7 @@
     }
 
     const token = useAllEvents
-      ? (mode === "edit" ? state.remote.bundleEditToken : state.remote.bundleReadToken)
+      ? (mode === "manage" ? state.remote.bundleManageToken : (mode === "edit" ? state.remote.bundleEditToken : state.remote.bundleReadToken))
       : (mode === "edit" ? state.remote.editToken : (state.remote.readToken || state.remote.token));
     const link = createShareLink(state.remote.listId, token, mode, {
       scope: useAllEvents ? SHARE_SCOPE_ALL : SHARE_SCOPE_EVENT,
@@ -3840,9 +4114,11 @@
       const scopeText = useAllEvents
         ? "Dieser Link enthält alle aktuell vorhandenen Events aus dem Dropdown."
         : "Dieser Link enthält nur das aktuell aktive Event.";
-      const permissionText = mode === "edit"
-        ? "Editierbare Links erlauben Ticketänderungen innerhalb der freigegebenen Events, aber keine Event-Verwaltung."
-        : "Read-only-Links erlauben Ansehen und CSV-Export, aber keine Änderungen.";
+      const permissionText = mode === "manage"
+        ? "Dieser Link erlaubt Ticketänderungen und Event-Verwaltung innerhalb der freigegebenen Events."
+        : (mode === "edit"
+          ? "Editierbare Links erlauben Ticketänderungen innerhalb der freigegebenen Events, aber keine Event-Verwaltung."
+          : "Read-only-Links erlauben Ansehen und CSV-Export, aber keine Änderungen.");
       els.shareDialogNote.textContent = `${scopeText} ${permissionText}`;
     }
   }
@@ -3930,6 +4206,7 @@
       state.remote.bundleToken = "";
       state.remote.bundleReadToken = "";
       state.remote.bundleEditToken = "";
+      state.remote.bundleManageToken = "";
       state.remote.sharedEventAccess = {};
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
@@ -3976,7 +4253,7 @@
   function createShareHash(listId, token, mode, eventName = "", { scope = SHARE_SCOPE_EVENT, bundleId = "" } = {}) {
     const params = new URLSearchParams();
     params.set(SHARE_PARAM_TOKEN, token);
-    params.set(SHARE_PARAM_ROLE, mode === "edit" ? "edit" : "read");
+    params.set(SHARE_PARAM_ROLE, mode === "manage" ? "manage" : (mode === "edit" ? "edit" : "read"));
 
     if (scope === SHARE_SCOPE_ALL) {
       const safeBundleId = sanitizeShareBundleId(bundleId);

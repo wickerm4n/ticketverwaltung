@@ -1767,6 +1767,10 @@ body.share-link-mode.read-only-mode .share-status {
   accent-color: #13a56f;
 }
 
+.share-scope-option:has(input:disabled) {
+  cursor: not-allowed;
+}
+
 .share-scope-option input:disabled + .share-scope-text {
   opacity: 0.5;
 }

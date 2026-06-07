@@ -132,7 +132,8 @@
         ".validate": "!newData.exists() || newData.hasChildren(['meta', 'links'])",
         "meta": {
           ".read": "auth != null && data.child('ownerUid').val() == auth.uid",
-          ".validate": "newData.hasChildren(['ownerUid', 'appVersion', 'createdAt', 'updatedAt'])",
+          ".write": "auth != null && (data.child('ownerUid').val() == auth.uid || root.child('shareBundles').child($bundleId).child('links').child(root.child('bundleMembers').child($bundleId).child(auth.uid).child('token').val()).child('canManageEvents').val() == true)",
+          ".validate": "newData.hasChildren(['ownerUid', 'appVersion', 'createdAt', 'updatedAt']) && (!data.exists() || newData.child('ownerUid').val() == data.child('ownerUid').val()) && (!data.exists() || newData.child('createdAt').val() == data.child('createdAt').val())",
           "ownerUid": {
             ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 128"
           },
@@ -150,15 +151,18 @@
           }
         },
         "links": {
+          ".write": "auth != null && (root.child('shareBundles').child($bundleId).child('meta').child('ownerUid').val() == auth.uid || root.child('shareBundles').child($bundleId).child('links').child(root.child('bundleMembers').child($bundleId).child(auth.uid).child('token').val()).child('canManageEvents').val() == true)",
           "$bundleToken": {
-            ".read": "auth != null && $bundleId.matches(/^bun_[A-Za-z0-9_-]{18}$/) && $bundleToken.matches(/^(br|be)_[A-Za-z0-9_-]{24}$/)",
-            ".write": "auth != null && root.child('shareBundles').child($bundleId).child('meta').child('ownerUid').val() == auth.uid",
-            ".validate": "newData.hasChildren(['role', 'canWrite', 'createdAt', 'events']) && ((newData.child('role').val() == 'reader' && newData.child('canWrite').val() == false && $bundleToken.matches(/^br_[A-Za-z0-9_-]{24}$/)) || (newData.child('role').val() == 'editor' && newData.child('canWrite').val() == true && $bundleToken.matches(/^be_[A-Za-z0-9_-]{24}$/)))",
+            ".read": "auth != null && $bundleId.matches(/^bun_[A-Za-z0-9_-]{18}$/) && $bundleToken.matches(/^(br|be|ba)_[A-Za-z0-9_-]{24}$/)",
+            ".validate": "newData.hasChildren(['role', 'canWrite', 'createdAt', 'events']) && ((newData.child('role').val() == 'reader' && newData.child('canWrite').val() == false && (!newData.child('canManageEvents').exists() || newData.child('canManageEvents').val() == false) && $bundleToken.matches(/^br_[A-Za-z0-9_-]{24}$/)) || (newData.child('role').val() == 'editor' && newData.child('canWrite').val() == true && (!newData.child('canManageEvents').exists() || newData.child('canManageEvents').val() == false) && $bundleToken.matches(/^be_[A-Za-z0-9_-]{24}$/)) || (newData.child('role').val() == 'manager' && newData.child('canWrite').val() == true && newData.child('canManageEvents').val() == true && $bundleToken.matches(/^ba_[A-Za-z0-9_-]{24}$/)))",
             "role": {
-              ".validate": "newData.val() == 'reader' || newData.val() == 'editor'"
+              ".validate": "newData.val() == 'reader' || newData.val() == 'editor' || newData.val() == 'manager'"
             },
             "canWrite": {
               ".validate": "newData.isBoolean()"
+            },
+            "canManageEvents": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
             },
             "createdAt": {
               ".validate": "newData.isNumber() && newData.val() > 0"
@@ -169,7 +173,7 @@
             "events": {
               ".validate": "!newData.isString() && !newData.isNumber() && !newData.isBoolean()",
               "$eventId": {
-                ".validate": "$eventId.matches(/^evt_[A-Za-z0-9_-]{14}$/) && newData.hasChildren(['eventId', 'name', 'listId', 'token', 'order', 'updatedAt'])",
+                ".validate": "!newData.exists() || ($eventId.matches(/^evt_[A-Za-z0-9_-]{14}$/) && newData.hasChildren(['eventId', 'name', 'listId', 'token', 'order', 'updatedAt']))",
                 "eventId": {
                   ".validate": "newData.isString() && newData.val() == $eventId"
                 },
@@ -181,6 +185,12 @@
                 },
                 "token": {
                   ".validate": "newData.isString() && newData.val().matches(/^(ro|ed)_[A-Za-z0-9_-]{24}$/)"
+                },
+                "readToken": {
+                  ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^ro_[A-Za-z0-9_-]{24}$/))"
+                },
+                "editToken": {
+                  ".validate": "!newData.exists() || (newData.isString() && newData.val().matches(/^ed_[A-Za-z0-9_-]{24}$/))"
                 },
                 "order": {
                   ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() < 100"
@@ -238,6 +248,33 @@
           },
           "token": {
             ".validate": "newData.isString() && newData.val().matches(/^(ro|ed)_[A-Za-z0-9_-]{24}$/)"
+          },
+          "joinedAt": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "bundleMembers": {
+      "$bundleId": {
+        "$uid": {
+          ".read": "auth != null && (auth.uid == $uid || root.child('shareBundles').child($bundleId).child('meta').child('ownerUid').val() == auth.uid)",
+          ".write": "auth != null && auth.uid == $uid && $bundleId.matches(/^bun_[A-Za-z0-9_-]{18}$/) && newData.exists() && root.child('shareBundles').child($bundleId).child('links').child(newData.child('token').val()).exists() && root.child('shareBundles').child($bundleId).child('links').child(newData.child('token').val()).child('role').val() == newData.child('role').val() && root.child('shareBundles').child($bundleId).child('links').child(newData.child('token').val()).child('canWrite').val() == newData.child('canWrite').val() && ((!root.child('shareBundles').child($bundleId).child('links').child(newData.child('token').val()).child('canManageEvents').exists() && newData.child('canManageEvents').val() == false) || root.child('shareBundles').child($bundleId).child('links').child(newData.child('token').val()).child('canManageEvents').val() == newData.child('canManageEvents').val())",
+          ".validate": "newData.hasChildren(['role', 'canWrite', 'canManageEvents', 'token', 'joinedAt']) && (newData.child('role').val() == 'reader' || newData.child('role').val() == 'editor' || newData.child('role').val() == 'manager') && newData.child('canWrite').isBoolean() && newData.child('canManageEvents').isBoolean() && newData.child('token').isString() && newData.child('token').val().matches(/^(br|be|ba)_[A-Za-z0-9_-]{24}$/) && newData.child('joinedAt').isNumber() && newData.child('joinedAt').val() > 0 && ((newData.child('role').val() == 'reader' && newData.child('canWrite').val() == false && newData.child('canManageEvents').val() == false) || (newData.child('role').val() == 'editor' && newData.child('canWrite').val() == true && newData.child('canManageEvents').val() == false) || (newData.child('role').val() == 'manager' && newData.child('canWrite').val() == true && newData.child('canManageEvents').val() == true))",
+          "role": {
+            ".validate": "newData.val() == 'reader' || newData.val() == 'editor' || newData.val() == 'manager'"
+          },
+          "canWrite": {
+            ".validate": "newData.isBoolean()"
+          },
+          "canManageEvents": {
+            ".validate": "newData.isBoolean()"
+          },
+          "token": {
+            ".validate": "newData.isString() && newData.val().matches(/^(br|be|ba)_[A-Za-z0-9_-]{24}$/)"
           },
           "joinedAt": {
             ".validate": "newData.isNumber() && newData.val() > 0"
