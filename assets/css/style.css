@@ -1739,6 +1739,7 @@ body.share-link-mode.read-only-mode .share-status {
 .share-scope-option {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
+  align-items: flex-start;
   gap: 10px;
   margin: 0 0 16px;
   padding: 14px;
@@ -1766,9 +1767,13 @@ body.share-link-mode.read-only-mode .share-status {
   accent-color: #13a56f;
 }
 
-.share-scope-option input:disabled + .check-visual + span,
-.share-scope-option input:disabled + span {
+.share-scope-option input:disabled + .share-scope-text {
   opacity: 0.5;
+}
+
+.share-scope-text {
+  display: block;
+  min-width: 0;
 }
 
 .share-scope-option strong,
