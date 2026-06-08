@@ -869,16 +869,6 @@ tbody tr:last-child td {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
 }
 
-
-.local-share-disabled #shareBtn {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.local-share-disabled #shareBtn:hover {
-  transform: none;
-}
-
 .header-icon-btn.btn-danger {
   background:
     linear-gradient(180deg, rgba(255, 111, 131, 0.22), rgba(255, 111, 131, 0.12)),
@@ -1730,69 +1720,6 @@ body.share-link-mode.read-only-mode .share-status {
 }
 
 .share-option small {
-  color: var(--muted);
-  line-height: 1.35;
-  font-weight: 720;
-}
-
-
-.share-scope-option {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: flex-start;
-  gap: 10px;
-  margin: 0 0 16px;
-  padding: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
-}
-
-.share-scope-option:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.095);
-}
-
-.share-scope-option:has(input:checked) {
-  border-color: rgba(140, 240, 197, 0.48);
-  background: rgba(19, 165, 111, 0.12);
-}
-
-.share-scope-option input {
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: #13a56f;
-}
-
-.share-scope-option:has(input:disabled) {
-  cursor: not-allowed;
-}
-
-.share-scope-option input:disabled + .share-scope-text {
-  opacity: 0.5;
-}
-
-.share-scope-text {
-  display: block;
-  min-width: 0;
-}
-
-.share-scope-option strong,
-.share-scope-option small {
-  display: block;
-}
-
-.share-scope-option strong {
-  margin-bottom: 4px;
-  color: var(--text);
-  font-size: 0.95rem;
-  font-weight: 900;
-}
-
-.share-scope-option small {
   color: var(--muted);
   line-height: 1.35;
   font-weight: 720;

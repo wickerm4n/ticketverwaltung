@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "2026.06.07.12";
+  const APP_VERSION = "2026.06.08.01";
   const VERSION_STORAGE_KEY = "eventTicketManager.appVersion";
   const VERSION_RELOAD_GUARD_KEY = "eventTicketManager.versionReloadGuard";
   const VERSION_RELOAD_GUARD_AT_KEY = "eventTicketManager.versionReloadGuardAt";
@@ -39,17 +39,11 @@
   const SHARE_PARAM_TOKEN = "token";
   const SHARE_PARAM_ROLE = "role";
   const SHARE_PARAM_EVENT = "event";
-  const SHARE_PARAM_SCOPE = "scope";
-  const SHARE_PARAM_BUNDLE = "bundle";
-  const SHARE_SCOPE_EVENT = "event";
-  const SHARE_SCOPE_ALL = "all";
   const SHARE_ROLE_READ = "reader";
   const SHARE_ROLE_EDIT = "editor";
-  const SHARE_ROLE_MANAGER = "manager";
   const SHARE_ROLE_OWNER = "owner";
   const SHARE_TOKEN_LENGTH = 24;
   const SHARE_LIST_ID_LENGTH = 18;
-  const SHARE_BUNDLE_ID_LENGTH = 18;
   const REMOTE_SAVE_DEBOUNCE_MS = 350;
   const REMOTE_SAVE_RETRY_MS = 1200;
   const REMOTE_TOAST_COOLDOWN_MS = 2500;
@@ -70,8 +64,8 @@
   let firebaseRuntimeLoadPromise = null;
 
   const PRICES = Object.freeze({
-    normal: 2500,
-    vip: 4000,
+    normal: 2000,
+    vip: 3000,
   });
 
   const TYPE_LABELS = Object.freeze({
@@ -157,8 +151,6 @@
     shareDialogCard: document.querySelector(".share-modal-card"),
     shareModeRead: document.querySelector("#shareModeRead"),
     shareModeEdit: document.querySelector("#shareModeEdit"),
-    shareAllEventsToggle: document.querySelector("#shareAllEventsToggle"),
-    shareManageEventsToggle: document.querySelector("#shareManageEventsToggle"),
     shareLinkInput: document.querySelector("#shareLinkInput"),
     shareRotateBtn: document.querySelector("#shareRotateBtn"),
     shareCopyBtn: document.querySelector("#shareCopyBtn"),
@@ -570,24 +562,12 @@
     return safeListId ? state.events.items.find((event) => event.listId === safeListId) || null : null;
   }
 
-  function activateEventForRemoteList(listId, eventName = "", { persist = true, restrictToShare = false } = {}) {
+  function activateEventForRemoteList(listId, eventName = "") {
     const safeListId = sanitizeShareToken(listId, 128);
     if (!safeListId) return null;
 
     const sharedEventName = normalizeEventName(eventName);
     let event = findEventByListId(safeListId);
-
-    if (restrictToShare) {
-      event = event
-        ? { ...event, name: sharedEventName || event.name, listId: safeListId }
-        : createEventMeta({ name: sharedEventName || "Geteiltes Event", listId: safeListId });
-      event.updatedAt = Date.now();
-      state.events.items = [event];
-      state.events.activeId = event.id;
-      renderEventSelector();
-      return event;
-    }
-
     if (!event) {
       const reusableEvent = getReusableDefaultEventForShare();
       if (reusableEvent) {
@@ -606,11 +586,7 @@
     }
 
     state.events.activeId = event.id;
-    if (persist) {
-      saveEventRegistry();
-    } else {
-      renderEventSelector();
-    }
+    saveEventRegistry();
     return event;
   }
 
@@ -655,8 +631,6 @@
   }
 
   async function handleNewEventClick() {
-    if (!guardEventManagementAccess()) return;
-
     const name = await openEventNameDialog({
       title: "Neues Event",
       message: "Name für das neue Event:",
@@ -669,8 +643,6 @@
   }
 
   async function handleRenameEventClick() {
-    if (!guardEventManagementAccess()) return;
-
     const activeEvent = getActiveEvent();
     if (!activeEvent) {
       showToast("Kein aktives Event gefunden.", "warning");
@@ -694,20 +666,6 @@
     activeEvent.name = nextName;
     activeEvent.updatedAt = Date.now();
 
-    if (canManageSharedBundleEvents()) {
-      const renamed = await writeSharedBundleLinksFromCurrentEvents();
-      if (!renamed) {
-        activeEvent.name = previousName;
-        activeEvent.updatedAt = Date.now();
-        showToast("Eventname konnte nicht remote gespeichert werden.", "danger");
-        renderEventSelector();
-        return;
-      }
-      renderEventSelector();
-      showToast("Event umbenannt.", "success");
-      return;
-    }
-
     if (!saveEventRegistry()) {
       const currentEvent = getActiveEvent();
       if (currentEvent) {
@@ -723,8 +681,6 @@
   }
 
   async function handleDeleteEventClick() {
-    if (!guardEventManagementAccess()) return;
-
     const activeEvent = getActiveEvent();
     if (!activeEvent) {
       showToast("Kein aktives Event gefunden.", "warning");
@@ -752,11 +708,6 @@
   }
 
   async function deleteActiveEvent() {
-    if (!guardEventManagementAccess()) return false;
-    if (canManageSharedBundleEvents()) {
-      return deleteActiveSharedBundleEvent();
-    }
-
     const activeEvent = getActiveEvent();
     if (!activeEvent) return false;
 
@@ -823,8 +774,6 @@
       url.searchParams.delete(SHARE_PARAM_TOKEN);
       url.searchParams.delete(SHARE_PARAM_ROLE);
       url.searchParams.delete(SHARE_PARAM_EVENT);
-      url.searchParams.delete(SHARE_PARAM_SCOPE);
-      url.searchParams.delete(SHARE_PARAM_BUNDLE);
       url.hash = "";
       window.history.replaceState(null, document.title, url.href);
     } catch {
@@ -859,7 +808,6 @@
   }
 
   async function createAndSwitchToNewEvent(name = "") {
-    if (!guardEventManagementAccess()) return;
     if (!(await prepareCurrentEventForNavigation())) return;
 
     const event = createEventMeta({ name: normalizeEventName(name) || getNextEventName() });
@@ -875,10 +823,6 @@
   }
 
   async function switchToEvent(eventId, { silent = false } = {}) {
-    if (state.remote.openedFromShareLink && state.remote.shareScope === SHARE_SCOPE_ALL) {
-      return switchToSharedBundleEvent(eventId, { silent });
-    }
-
     const targetEvent = findEventById(eventId);
     if (!targetEvent) return false;
     if (targetEvent.id === state.events.activeId) return true;
@@ -953,14 +897,6 @@
     state.remote.role = "local";
     state.remote.canWrite = true;
     state.remote.openedFromShareLink = false;
-    state.remote.shareScope = SHARE_SCOPE_EVENT;
-    state.remote.bundleId = "";
-    state.remote.bundleToken = "";
-    state.remote.bundleReadToken = "";
-    state.remote.bundleEditToken = "";
-    state.remote.bundleManageToken = "";
-    state.remote.canManageEvents = false;
-    state.remote.sharedEventAccess = {};
     state.remote.unsubscribe = null;
     state.remote.applyingRemote = false;
     state.remote.saveTimer = 0;
@@ -1119,10 +1055,8 @@
     els.renameEventBtn?.addEventListener("click", handleRenameEventClick);
     els.deleteEventBtn?.addEventListener("click", handleDeleteEventClick);
     els.shareBtn?.addEventListener("click", handleShareButtonClick);
-    els.shareModeRead?.addEventListener("change", handleShareDialogOptionChange);
-    els.shareModeEdit?.addEventListener("change", handleShareDialogOptionChange);
-    els.shareAllEventsToggle?.addEventListener("change", handleShareDialogOptionChange);
-    els.shareManageEventsToggle?.addEventListener("change", handleShareDialogOptionChange);
+    els.shareModeRead?.addEventListener("change", updateShareDialogLink);
+    els.shareModeEdit?.addEventListener("change", updateShareDialogLink);
     els.shareRotateBtn?.addEventListener("click", rotateShareLinks);
     els.shareCopyBtn?.addEventListener("click", copyShareLinkFromDialog);
     els.shareCloseBtn?.addEventListener("click", closeShareDialog);
@@ -2529,15 +2463,7 @@
       shareKey: "",
       role: "local",
       canWrite: true,
-      canManageEvents: true,
       openedFromShareLink: false,
-      shareScope: SHARE_SCOPE_EVENT,
-      bundleId: "",
-      bundleToken: "",
-      bundleReadToken: "",
-      bundleEditToken: "",
-      bundleManageToken: "",
-      sharedEventAccess: {},
       unsubscribe: null,
       initPromise: null,
       applyingRemote: false,
@@ -2554,13 +2480,13 @@
   }
 
   async function initFirebaseAndMaybeOpenSharedList() {
-    state.remote.baseUrl = resolveAppBaseUrl();
+    state.remote.baseUrl = normalizeBaseUrl(appConfig?.baseUrl) || getCurrentBaseUrl();
 
-    if (isLocalShareEnvironment()) {
+    if (isLocalFileUrl()) {
       state.remote.configured = false;
       updateAccessUi();
       if (getShareParamsFromUrl()) {
-        showToast("Share-Links sind im lokalen Modus deaktiviert. Bitte öffne den Link über die veröffentlichte GitHub-Pages-Seite.", "warning");
+        showToast("Share-Links brauchen Firebase und funktionieren lokal nur über einen Webserver.", "warning");
       }
       return;
     }
@@ -2574,7 +2500,7 @@
       return;
     }
 
-    state.remote.baseUrl = resolveAppBaseUrl();
+    state.remote.baseUrl = normalizeBaseUrl(appConfig?.baseUrl) || getCurrentBaseUrl();
 
     if (!isFirebaseConfigured()) {
       state.remote.configured = false;
@@ -2611,7 +2537,7 @@
 
   async function loadFirebaseRuntime() {
     if (initializeApp && getAuth && getDatabase && dbRef) return true;
-    if (isLocalShareEnvironment()) return false;
+    if (isLocalFileUrl()) return false;
 
     if (!firebaseRuntimeLoadPromise) {
       firebaseRuntimeLoadPromise = Promise.all([
@@ -2645,14 +2571,6 @@
 
   function isLocalFileUrl() {
     return window.location.protocol === "file:";
-  }
-
-  function isLocalShareEnvironment() {
-    return isLocalDevelopmentUrl();
-  }
-
-  function canUseShareFeature() {
-    return !isLocalShareEnvironment();
   }
 
   function isFirebaseConfigured() {
@@ -2701,31 +2619,18 @@
   }
 
   function getShareParamsFromSearchParams(params) {
+    const listId = sanitizeShareToken(params.get(SHARE_PARAM_LIST), 128);
     const token = sanitizeShareToken(params.get(SHARE_PARAM_TOKEN), 256);
     const rawRole = String(params.get(SHARE_PARAM_ROLE) || "read").toLowerCase();
-    const role = rawRole === "manage" || rawRole === "admin" || rawRole === SHARE_ROLE_MANAGER
-      ? SHARE_ROLE_MANAGER
-      : (rawRole === "edit" || rawRole === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
-    const rawScope = String(params.get(SHARE_PARAM_SCOPE) || SHARE_SCOPE_EVENT).toLowerCase();
-    const scope = rawScope === SHARE_SCOPE_ALL ? SHARE_SCOPE_ALL : SHARE_SCOPE_EVENT;
+    const role = rawRole === "edit" || rawRole === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ;
     const eventName = normalizeEventName(params.get(SHARE_PARAM_EVENT));
 
-    if (scope === SHARE_SCOPE_ALL) {
-      const bundleId = sanitizeShareBundleId(params.get(SHARE_PARAM_BUNDLE));
-      if (!bundleId || !token) return null;
-      return { scope, bundleId, token, role, eventName };
-    }
-
-    const listId = sanitizeShareToken(params.get(SHARE_PARAM_LIST), 128);
     if (!listId || !token) return null;
-    return { scope, listId, token, role, eventName };
+    return { listId, token, role, eventName };
   }
 
-  function getShareKey({ scope = SHARE_SCOPE_EVENT, listId = "", bundleId = "", token, role } = {}) {
-    if (scope === SHARE_SCOPE_ALL) {
-      return bundleId && token ? `${SHARE_SCOPE_ALL}:${bundleId}:${token}:${role || SHARE_ROLE_READ}` : "";
-    }
-    return listId && token ? `${SHARE_SCOPE_EVENT}:${listId}:${token}:${role || SHARE_ROLE_READ}` : "";
+  function getShareKey({ listId, token, role } = {}) {
+    return listId && token ? `${listId}:${token}:${role || SHARE_ROLE_READ}` : "";
   }
 
   async function handleShareHashChange() {
@@ -2744,20 +2649,14 @@
     await joinSharedListFromUrl(shareParams);
   }
 
-  async function joinSharedListFromUrl({ scope = SHARE_SCOPE_EVENT, bundleId = "", listId = "", token, role, eventName = "" }) {
-    if (scope === SHARE_SCOPE_ALL) {
-      await joinSharedBundleFromUrl({ bundleId, token, role });
-      return;
-    }
-
+  async function joinSharedListFromUrl({ listId, token, role, eventName = "" }) {
     if (!(await ensureFirebaseReady())) return;
     if (!(await prepareCurrentEventForNavigation())) return;
 
-    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
-    const memberRole = role === SHARE_ROLE_MANAGER ? SHARE_ROLE_EDIT : role;
-    const shareKey = getShareKey({ scope: SHARE_SCOPE_EVENT, listId, token, role });
+    const canWrite = role === SHARE_ROLE_EDIT;
+    const shareKey = getShareKey({ listId, token, role });
     const uid = state.remote.user.uid;
-    const memberData = createMemberData({ role: memberRole, canWrite, token, joinedAt: Date.now() });
+    const memberData = createMemberData({ role, canWrite, token, joinedAt: Date.now() });
 
     try {
       await dbSet(dbRef(state.remote.db, `members/${listId}/${uid}`), memberData);
@@ -2766,23 +2665,21 @@
       const readToken = ownerTokens?.readToken || (role === SHARE_ROLE_READ ? token : "");
       const editToken = ownerTokens?.editToken || (role === SHARE_ROLE_EDIT ? token : "");
       resetRemoteListConnection();
-      activateEventForRemoteList(listId, eventName, { persist: false, restrictToShare: true });
+      activateEventForRemoteList(listId, eventName);
+      loadDataForActiveEvent();
       state.remote.listId = listId;
       state.remote.token = isOwner ? (editToken || token) : token;
       state.remote.role = isOwner ? SHARE_ROLE_OWNER : role;
       state.remote.canWrite = isOwner || canWrite;
-      state.remote.canManageEvents = isOwner;
       state.remote.openedFromShareLink = true;
-      state.remote.shareScope = SHARE_SCOPE_EVENT;
       state.remote.shareKey = shareKey;
       state.remote.readToken = readToken;
       state.remote.editToken = editToken;
-      loadDataForActiveEvent();
       if (isOwner) {
         saveOwnerRemoteSession({ listId, authUid: uid });
       }
       subscribeToSharedList(listId);
-      replaceLegacyShareQueryWithHash(listId, token, role === SHARE_ROLE_MANAGER ? "manage" : (canWrite ? "edit" : "read"), eventName);
+      replaceLegacyShareQueryWithHash(listId, token, canWrite ? "edit" : "read", eventName);
       showToast(state.remote.canWrite ? "Editierbarer Share-Link geöffnet." : "Read-only-Share-Link geöffnet.", "success");
       updateAccessUi();
     } catch (error) {
@@ -2792,226 +2689,7 @@
     }
   }
 
-  async function joinSharedBundleFromUrl({ bundleId, token, role }) {
-    if (!(await ensureFirebaseReady())) return;
-    if (!(await prepareCurrentEventForNavigation())) return;
-
-    const safeBundleId = sanitizeShareBundleId(bundleId);
-    const safeToken = sanitizeShareToken(token, 256);
-    const requestedRole = role === SHARE_ROLE_MANAGER ? SHARE_ROLE_MANAGER : (role === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
-    const shareKey = getShareKey({ scope: SHARE_SCOPE_ALL, bundleId: safeBundleId, token: safeToken, role: requestedRole });
-
-    if (!safeBundleId || !safeToken) {
-      showToast("Share-Link ungültig.", "danger");
-      return;
-    }
-
-    try {
-      const snapshot = await dbGet(dbRef(state.remote.db, `shareBundles/${safeBundleId}/links/${safeToken}`));
-      if (!snapshot.exists()) {
-        throw new Error("Bundle-Link nicht gefunden.");
-      }
-
-      const bundle = normalizeShareBundleLink(snapshot.val(), requestedRole);
-      if (bundle.events.length === 0) {
-        throw new Error("Bundle enthält keine Events.");
-      }
-
-      const uid = state.remote.user.uid;
-      const memberUpdates = {};
-      bundle.events.forEach((event) => {
-        memberUpdates[`members/${event.listId}/${uid}`] = createMemberData({
-          role: event.memberRole || (bundle.canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ),
-          canWrite: bundle.canWrite,
-          token: event.token,
-          joinedAt: Date.now(),
-        });
-      });
-      memberUpdates[`bundleMembers/${safeBundleId}/${uid}`] = createBundleMemberData({
-        role: bundle.role,
-        canWrite: bundle.canWrite,
-        canManageEvents: bundle.canManageEvents,
-        token: safeToken,
-        joinedAt: Date.now(),
-      });
-      await dbUpdate(dbRef(state.remote.db), memberUpdates);
-
-      resetRemoteListConnection();
-      state.events.items = bundle.events.map((event) => ({
-        id: event.eventId,
-        name: event.name,
-        listId: event.listId,
-        createdAt: event.createdAt,
-        updatedAt: event.updatedAt,
-      }));
-      state.events.activeId = state.events.items[0]?.id || "";
-      renderEventSelector();
-
-      const activeAccess = bundle.accessByEventId[state.events.activeId];
-      applySharedBundleRemoteAccess(activeAccess, {
-        bundleId: safeBundleId,
-        bundleToken: safeToken,
-        bundleRole: bundle.role,
-        bundleCanWrite: bundle.canWrite,
-        bundleCanManageEvents: bundle.canManageEvents,
-        shareKey,
-        sharedEventAccess: bundle.accessByEventId,
-      });
-      loadDataForActiveEvent();
-      subscribeToSharedList(activeAccess.listId);
-      replaceBundleShareQueryWithHash(safeBundleId, safeToken, bundle.canManageEvents ? "manage" : (bundle.canWrite ? "edit" : "read"));
-      showToast(bundle.canManageEvents ? "Alle-Events-Share-Link mit Event-Verwaltung geöffnet." : (bundle.canWrite ? "Editierbarer Alle-Events-Share-Link geöffnet." : "Read-only-Alle-Events-Share-Link geöffnet."), "success");
-      updateAccessUi();
-      renderApp();
-    } catch (error) {
-      console.error("Alle-Events-Share-Link konnte nicht geöffnet werden:", error);
-      showToast("Share-Link ungültig oder ohne Berechtigung.", "danger");
-      updateAccessUi();
-    }
-  }
-
-  function normalizeShareBundleLink(value, requestedRole = SHARE_ROLE_READ) {
-    const hasManagerRights = value?.role === SHARE_ROLE_MANAGER && value?.canWrite === true && value?.canManageEvents === true;
-    const hasEditorRights = value?.role === SHARE_ROLE_EDIT && value?.canWrite === true;
-    const linkRole = hasManagerRights ? SHARE_ROLE_MANAGER : (hasEditorRights ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
-    const role = requestedRole === SHARE_ROLE_MANAGER && linkRole === SHARE_ROLE_MANAGER
-      ? SHARE_ROLE_MANAGER
-      : (requestedRole === SHARE_ROLE_EDIT && (linkRole === SHARE_ROLE_EDIT || linkRole === SHARE_ROLE_MANAGER) ? SHARE_ROLE_EDIT : linkRole);
-    const canManageEvents = role === SHARE_ROLE_MANAGER;
-    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
-    const rawEvents = value?.events && typeof value.events === "object" && !Array.isArray(value.events)
-      ? Object.entries(value.events)
-      : [];
-    const seenEventIds = new Set();
-    const seenListIds = new Set();
-    const createdAt = normalizeTimestamp(value?.createdAt, Date.now());
-
-    const events = rawEvents
-      .map(([key, event], index) => {
-        const eventId = sanitizeEventId(event?.eventId) || sanitizeEventId(event?.id) || sanitizeEventId(key) || createEventId();
-        const listId = sanitizeShareToken(event?.listId, 128);
-        const readToken = sanitizeShareToken(event?.readToken, 256);
-        const editToken = sanitizeShareToken(event?.editToken, 256);
-        const fallbackToken = sanitizeShareToken(event?.token, 256);
-        const token = canWrite ? (editToken || fallbackToken) : (readToken || fallbackToken);
-        if (!eventId || !listId || !token || seenEventIds.has(eventId) || seenListIds.has(listId)) return null;
-        seenEventIds.add(eventId);
-        seenListIds.add(listId);
-        return {
-          eventId,
-          name: normalizeEventName(event?.name) || `Event ${index + 1}`,
-          listId,
-          token,
-          readToken: readToken || (!canWrite ? token : ""),
-          editToken: editToken || (canWrite ? token : ""),
-          order: Math.max(0, parseSafeInteger(event?.order) || index),
-          createdAt,
-          updatedAt: normalizeTimestamp(event?.updatedAt, createdAt),
-          canWrite,
-          canManageEvents,
-          role,
-          memberRole: canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ,
-        };
-      })
-      .filter(Boolean)
-      .sort((left, right) => left.order - right.order)
-      .slice(0, MAX_EVENTS);
-
-    const accessByEventId = {};
-    events.forEach((event) => {
-      accessByEventId[event.eventId] = {
-        eventId: event.eventId,
-        listId: event.listId,
-        token: event.token,
-        readToken: event.readToken,
-        editToken: event.editToken,
-        role,
-        memberRole: event.memberRole,
-        canWrite,
-        canManageEvents,
-      };
-    });
-
-    return { role, canWrite, canManageEvents, events, accessByEventId };
-}
-
-  function getSharedBundleContext() {
-    return {
-      bundleId: state.remote.bundleId,
-      bundleToken: state.remote.bundleToken,
-      bundleRole: state.remote.role === SHARE_ROLE_EDIT ? SHARE_ROLE_EDIT : SHARE_ROLE_READ,
-      bundleCanWrite: Boolean(state.remote.canWrite),
-      shareKey: state.remote.shareKey,
-      sharedEventAccess: { ...(state.remote.sharedEventAccess || {}) },
-    };
-  }
-
-  function getSharedEventAccess(eventId) {
-    const safeEventId = sanitizeEventId(eventId);
-    return safeEventId ? state.remote.sharedEventAccess?.[safeEventId] || null : null;
-  }
-
-  function applySharedBundleRemoteAccess(access, context) {
-    if (!access?.listId || !access?.token) return false;
-
-    state.remote.listId = access.listId;
-    state.remote.token = access.token;
-    state.remote.readToken = access.canWrite ? "" : access.token;
-    state.remote.editToken = access.canWrite ? access.token : "";
-    state.remote.role = access.role || (access.canWrite ? SHARE_ROLE_EDIT : SHARE_ROLE_READ);
-    state.remote.canWrite = Boolean(access.canWrite);
-    state.remote.canManageEvents = Boolean(access.canManageEvents);
-    state.remote.openedFromShareLink = true;
-    state.remote.shareScope = SHARE_SCOPE_ALL;
-    state.remote.bundleId = context.bundleId || state.remote.bundleId;
-    state.remote.bundleToken = context.bundleToken || state.remote.bundleToken;
-    state.remote.bundleReadToken = context.bundleCanWrite ? "" : (context.bundleToken || state.remote.bundleReadToken);
-    state.remote.bundleEditToken = context.bundleCanWrite ? (context.bundleToken || state.remote.bundleEditToken) : "";
-    state.remote.bundleManageToken = context.bundleCanManageEvents ? (context.bundleToken || state.remote.bundleManageToken) : (context.bundleManageToken || state.remote.bundleManageToken || "");
-    state.remote.shareKey = context.shareKey || state.remote.shareKey;
-    state.remote.sharedEventAccess = { ...(context.sharedEventAccess || state.remote.sharedEventAccess || {}) };
-    return true;
-  }
-
-  async function switchToSharedBundleEvent(eventId, { silent = false } = {}) {
-    const targetEvent = findEventById(eventId);
-    if (!targetEvent) return false;
-    if (targetEvent.id === state.events.activeId) return true;
-
-    const access = getSharedEventAccess(targetEvent.id);
-    if (!access) {
-      showToast("Dieses Event ist in diesem Share-Link nicht freigegeben.", "warning");
-      renderEventSelector();
-      return false;
-    }
-
-    if (!(await prepareCurrentEventForNavigation())) return false;
-
-    const context = getSharedBundleContext();
-    resetRemoteListConnection();
-    state.events.activeId = targetEvent.id;
-    renderEventSelector();
-    applySharedBundleRemoteAccess(access, context);
-    loadDataForActiveEvent();
-    subscribeToSharedList(access.listId);
-    clearForm();
-    renderApp();
-    updateAccessUi();
-
-    if (!silent) {
-      showToast(`${targetEvent.name} geöffnet.`, "success");
-    }
-
-    return true;
-  }
-
   async function handleShareButtonClick() {
-    if (!canUseShareFeature()) {
-      showToast("Teilen ist im lokalen Modus deaktiviert. Share-Links bitte nur über die veröffentlichte GitHub-Pages-Seite erstellen.", "warning");
-      updateAccessUi();
-      return;
-    }
-
     try {
       await waitForFirebaseInitialization();
       if (!(await ensureFirebaseReady())) {
@@ -3194,16 +2872,6 @@
     };
   }
 
-  function createBundleMemberData({ role, canWrite, canManageEvents = false, token, joinedAt = Date.now() }) {
-    return {
-      role,
-      canWrite: Boolean(canWrite),
-      canManageEvents: Boolean(canManageEvents),
-      token,
-      joinedAt,
-    };
-  }
-
   function createOwnerMemberData(token, joinedAt = Date.now()) {
     return createMemberData({
       role: SHARE_ROLE_OWNER,
@@ -3244,15 +2912,8 @@
       state.remote.editToken = editToken;
       state.remote.token = editToken;
       state.remote.shareKey = "";
-      state.remote.bundleId = "";
-      state.remote.bundleToken = "";
-      state.remote.bundleReadToken = "";
-      state.remote.bundleEditToken = "";
-      state.remote.bundleManageToken = "";
-      state.remote.sharedEventAccess = {};
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
-      state.remote.canManageEvents = true;
       state.remote.openedFromShareLink = false;
       linkActiveEventToRemoteList(listId);
       saveSharedData(listId, initialState);
@@ -3266,391 +2927,6 @@
       state.remote.lastShareErrorMessage = formatFirebaseErrorMessage(error, "Share-Link konnte nicht erstellt werden.");
       showToast(state.remote.lastShareErrorMessage, "danger");
       return false;
-    }
-  }
-
-  async function ensureAllEventsShareBundleForDialog({ force = false } = {}) {
-    if (!canCreateAllEventsShare()) {
-      showToast("Alle-Events-Links können nur lokal oder als Besitzer erstellt werden.", "warning");
-      return false;
-    }
-
-    if (!force && state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken && state.remote.bundleManageToken) {
-      return true;
-    }
-
-    if (ensureAllEventsShareBundleForDialog.promise) {
-      return ensureAllEventsShareBundleForDialog.promise;
-    }
-
-    ensureAllEventsShareBundleForDialog.promise = createShareBundleForAllEvents()
-      .finally(() => {
-        ensureAllEventsShareBundleForDialog.promise = null;
-      });
-
-    return ensureAllEventsShareBundleForDialog.promise;
-  }
-
-  async function createShareBundleForAllEvents() {
-    const uid = state.remote.user?.uid || "";
-    if (!uid) return false;
-    if (!(await prepareCurrentEventForNavigation())) return false;
-
-    const events = state.events.items.slice(0, MAX_EVENTS);
-    if (events.length === 0) {
-      showToast("Keine Events zum Teilen vorhanden.", "warning");
-      return false;
-    }
-
-    const remoteEvents = [];
-    for (const [index, event] of events.entries()) {
-      const remoteEvent = await ensureRemoteListForEvent(event, uid, index);
-      if (!remoteEvent) {
-        showToast(`Event "${event.name}" konnte nicht für den Alle-Events-Link vorbereitet werden.`, "danger");
-        return false;
-      }
-      remoteEvents.push(remoteEvent);
-    }
-
-    const now = Date.now();
-    const bundleId = createShareId("bun", SHARE_BUNDLE_ID_LENGTH);
-    const readBundleToken = createShareId("br", SHARE_TOKEN_LENGTH);
-    const editBundleToken = createShareId("be", SHARE_TOKEN_LENGTH);
-    const manageBundleToken = createShareId("ba", SHARE_TOKEN_LENGTH);
-    const readEvents = {};
-    const editEvents = {};
-    const manageEvents = {};
-
-    remoteEvents.forEach((remoteEvent, index) => {
-      const base = {
-        eventId: remoteEvent.event.id,
-        name: normalizeEventName(remoteEvent.event.name) || `Event ${index + 1}`,
-        listId: remoteEvent.listId,
-        order: index,
-        updatedAt: normalizeTimestamp(remoteEvent.event.updatedAt, now),
-      };
-      readEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.readToken, readToken: remoteEvent.readToken };
-      editEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.editToken, editToken: remoteEvent.editToken };
-      manageEvents[remoteEvent.event.id] = { ...base, token: remoteEvent.editToken, readToken: remoteEvent.readToken, editToken: remoteEvent.editToken };
-    });
-
-    const bundleData = {
-      meta: {
-        ownerUid: uid,
-        appVersion: APP_VERSION,
-        createdAt: now,
-        updatedAt: now,
-      },
-      links: {
-        [readBundleToken]: {
-          role: SHARE_ROLE_READ,
-          canWrite: false,
-          canManageEvents: false,
-          createdAt: now,
-          appVersion: APP_VERSION,
-          events: readEvents,
-        },
-        [editBundleToken]: {
-          role: SHARE_ROLE_EDIT,
-          canWrite: true,
-          canManageEvents: false,
-          createdAt: now,
-          appVersion: APP_VERSION,
-          events: editEvents,
-        },
-        [manageBundleToken]: {
-          role: SHARE_ROLE_MANAGER,
-          canWrite: true,
-          canManageEvents: true,
-          createdAt: now,
-          appVersion: APP_VERSION,
-          events: manageEvents,
-        },
-      },
-    };
-
-    try {
-      await dbSet(dbRef(state.remote.db, `shareBundles/${bundleId}`), bundleData);
-      state.remote.bundleId = bundleId;
-      state.remote.bundleReadToken = readBundleToken;
-      state.remote.bundleEditToken = editBundleToken;
-      state.remote.bundleManageToken = manageBundleToken;
-      state.remote.bundleToken = editBundleToken;
-      saveEventRegistry();
-      showToast("Alle-Events-Share-Link vorbereitet.", "success");
-      return true;
-    } catch (error) {
-      console.error("Alle-Events-Share-Link konnte nicht erstellt werden:", error);
-      showToast(formatFirebaseErrorMessage(error, "Alle-Events-Share-Link konnte nicht erstellt werden."), "danger");
-      return false;
-    }
-  }
-
-  async function ensureRemoteListForEvent(event, uid, index = 0) {
-    const safeUid = sanitizeAuthUid(uid);
-    if (!event || !safeUid) return null;
-
-    const data = getPersistedDataForEvent(event);
-    const existingListId = sanitizeShareToken(event.listId, 128);
-
-    if (existingListId && await isCurrentUserListOwner(existingListId, safeUid)) {
-      const tokens = await ensureShareTokensForOwnedList(existingListId, safeUid);
-      if (!tokens.readToken || !tokens.editToken) return null;
-      await writePersistedDataToRemoteList(existingListId, data);
-      saveEventDataSnapshot(event, data, existingListId);
-      return {
-        event,
-        listId: existingListId,
-        readToken: tokens.readToken,
-        editToken: tokens.editToken,
-        order: index,
-      };
-    }
-
-    return createRemoteListForEvent(event, data, safeUid, index);
-  }
-
-  async function ensureShareTokensForOwnedList(listId, uid) {
-    const tokens = await loadShareTokensForOwner(listId);
-    if (tokens.readToken && tokens.editToken) return tokens;
-
-    const now = Date.now();
-    const bundle = createShareTokenBundle(now);
-    await dbUpdate(dbRef(state.remote.db), {
-      [`tokens/${listId}`]: bundle.tokensData,
-      [`members/${listId}/${uid}`]: createOwnerMemberData(bundle.editToken, now),
-      [`lists/${listId}/meta/updatedAt`]: now,
-      [`lists/${listId}/meta/revision`]: now,
-      [`lists/${listId}/meta/appVersion`]: APP_VERSION,
-    });
-
-    return { readToken: bundle.readToken, editToken: bundle.editToken };
-  }
-
-  async function createRemoteListForEvent(event, data, uid, index = 0) {
-    const listId = createShareId("lst", SHARE_LIST_ID_LENGTH);
-    const now = Date.now();
-    const { readToken, editToken, tokensData } = createShareTokenBundle(now);
-    const safeData = normalizePersistedData(data);
-    const listData = {
-      meta: {
-        ownerUid: uid,
-        appVersion: APP_VERSION,
-        createdAt: now,
-        updatedAt: now,
-        revision: now,
-      },
-      state: safeData,
-    };
-
-    await dbSet(dbRef(state.remote.db, `lists/${listId}`), listData);
-    await dbUpdate(dbRef(state.remote.db, `tokens/${listId}`), tokensData);
-    await dbSet(dbRef(state.remote.db, `members/${listId}/${uid}`), createOwnerMemberData(editToken, now));
-
-    event.listId = listId;
-    event.updatedAt = now;
-    saveEventDataSnapshot(event, safeData, listId);
-
-    return { event, listId, readToken, editToken, order: index };
-  }
-
-  function buildBundleEventsFromAccess(role) {
-    const canWrite = role === SHARE_ROLE_EDIT || role === SHARE_ROLE_MANAGER;
-    const events = {};
-    state.events.items.slice(0, MAX_EVENTS).forEach((event, index) => {
-      const access = getSharedEventAccess(event.id);
-      const readToken = sanitizeShareToken(access?.readToken, 256);
-      const editToken = sanitizeShareToken(access?.editToken || access?.token, 256);
-      const token = canWrite ? editToken : readToken;
-      if (!event?.id || !event.listId || !token) return;
-      const base = {
-        eventId: event.id,
-        name: normalizeEventName(event.name) || `Event ${index + 1}`,
-        listId: event.listId,
-        token,
-        order: index,
-        updatedAt: normalizeTimestamp(event.updatedAt, Date.now()),
-      };
-      if (role === SHARE_ROLE_READ) {
-        base.readToken = readToken || token;
-      } else if (role === SHARE_ROLE_EDIT) {
-        base.editToken = editToken || token;
-      } else {
-        base.readToken = readToken;
-        base.editToken = editToken || token;
-      }
-      events[event.id] = base;
-    });
-    return events;
-  }
-
-  async function writeSharedBundleLinksFromCurrentEvents() {
-    if (!canManageSharedBundleEvents()) return false;
-    const bundleId = sanitizeShareBundleId(state.remote.bundleId);
-    const now = Date.now();
-    if (!bundleId) return false;
-
-    const updates = {};
-    if (state.remote.bundleReadToken) {
-      updates[`shareBundles/${bundleId}/links/${state.remote.bundleReadToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_READ);
-    }
-    if (state.remote.bundleEditToken) {
-      updates[`shareBundles/${bundleId}/links/${state.remote.bundleEditToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_EDIT);
-    }
-    if (state.remote.bundleManageToken || state.remote.bundleToken) {
-      updates[`shareBundles/${bundleId}/links/${state.remote.bundleManageToken || state.remote.bundleToken}/events`] = buildBundleEventsFromAccess(SHARE_ROLE_MANAGER);
-    }
-    updates[`shareBundles/${bundleId}/meta/updatedAt`] = now;
-    updates[`shareBundles/${bundleId}/meta/appVersion`] = APP_VERSION;
-
-    try {
-      await dbUpdate(dbRef(state.remote.db), updates);
-      state.remote.sharedEventAccess = { ...(state.remote.sharedEventAccess || {}) };
-      renderEventSelector();
-      return true;
-    } catch (error) {
-      console.error("Event-Verwaltung konnte nicht im Share-Bundle gespeichert werden:", error);
-      showToast(formatFirebaseErrorMessage(error, "Event-Verwaltung konnte nicht gespeichert werden."), "danger");
-      return false;
-    }
-  }
-
-  async function createAndSwitchToNewSharedBundleEvent(name = "") {
-    if (!canManageSharedBundleEvents()) return false;
-    if (state.events.items.length >= MAX_EVENTS) {
-      showToast(`Maximal ${MAX_EVENTS} Events möglich.`, "warning");
-      return false;
-    }
-    if (!(await prepareCurrentEventForNavigation())) return false;
-
-    const uid = state.remote.user?.uid || "";
-    const event = createEventMeta({ name: normalizeEventName(name) || getNextEventName() });
-    const data = normalizePersistedData(null);
-
-    try {
-      const remoteEvent = await createRemoteListForEvent(event, data, uid, state.events.items.length);
-      if (!remoteEvent) return false;
-
-      state.events.items.push(event);
-      state.events.activeId = event.id;
-      state.remote.sharedEventAccess[event.id] = {
-        eventId: event.id,
-        listId: remoteEvent.listId,
-        token: remoteEvent.editToken,
-        readToken: remoteEvent.readToken,
-        editToken: remoteEvent.editToken,
-        role: SHARE_ROLE_MANAGER,
-        memberRole: SHARE_ROLE_EDIT,
-        canWrite: true,
-        canManageEvents: true,
-      };
-
-      const written = await writeSharedBundleLinksFromCurrentEvents();
-      if (!written) return false;
-
-      const context = getSharedBundleContext();
-      resetRemoteListConnection();
-      applySharedBundleRemoteAccess(state.remote.sharedEventAccess?.[event.id] || {
-        eventId: event.id,
-        listId: remoteEvent.listId,
-        token: remoteEvent.editToken,
-        readToken: remoteEvent.readToken,
-        editToken: remoteEvent.editToken,
-        role: SHARE_ROLE_MANAGER,
-        memberRole: SHARE_ROLE_EDIT,
-        canWrite: true,
-        canManageEvents: true,
-      }, context);
-      resetStateToDefaults();
-      clearForm();
-      subscribeToSharedList(remoteEvent.listId);
-      renderApp();
-      showToast(`${event.name} gestartet.`, "success");
-      return true;
-    } catch (error) {
-      console.error("Geteiltes Event konnte nicht erstellt werden:", error);
-      showToast(formatFirebaseErrorMessage(error, "Geteiltes Event konnte nicht erstellt werden."), "danger");
-      return false;
-    }
-  }
-
-  async function deleteActiveSharedBundleEvent() {
-    if (!canManageSharedBundleEvents()) return false;
-    const activeEvent = getActiveEvent();
-    if (!activeEvent) return false;
-    if (state.events.items.length <= 1) {
-      showToast("Das letzte freigegebene Event kann nicht gelöscht werden.", "warning");
-      return false;
-    }
-
-    const deletedIndex = Math.max(0, state.events.items.findIndex((event) => event.id === activeEvent.id));
-    const deletedId = activeEvent.id;
-    const context = getSharedBundleContext();
-    delete state.remote.sharedEventAccess[deletedId];
-    state.events.items = state.events.items.filter((event) => event.id !== deletedId);
-    const nextIndex = Math.min(deletedIndex, state.events.items.length - 1);
-    state.events.activeId = state.events.items[nextIndex]?.id || "";
-
-    const written = await writeSharedBundleLinksFromCurrentEvents();
-    if (!written) return false;
-
-    const nextAccess = getSharedEventAccess(state.events.activeId);
-    resetRemoteListConnection();
-    applySharedBundleRemoteAccess(nextAccess, context);
-    loadDataForActiveEvent();
-    clearForm();
-    subscribeToSharedList(nextAccess.listId);
-    renderApp();
-    showToast("Event aus dem Share-Link entfernt.", "success");
-    return true;
-  }
-
-  async function writePersistedDataToRemoteList(listId, data) {
-    const safeListId = sanitizeShareToken(listId, 128);
-    if (!safeListId) return false;
-
-    const now = Date.now();
-    await dbSet(dbRef(state.remote.db, `lists/${safeListId}/state`), normalizePersistedData(data));
-    await dbUpdate(dbRef(state.remote.db, `lists/${safeListId}/meta`), {
-      updatedAt: now,
-      revision: now,
-      appVersion: APP_VERSION,
-    });
-    return true;
-  }
-
-  function getPersistedDataForEvent(event) {
-    if (event?.id === state.events.activeId) {
-      return normalizePersistedData(createPersistedData());
-    }
-
-    const eventId = sanitizeEventId(event?.id);
-    const listId = sanitizeShareToken(event?.listId, 128);
-    const rawEventData = eventId ? safeStorageGet(localStorage, `${EVENT_DATA_PREFIX}${eventId}`) : "";
-    const rawSharedData = listId ? safeStorageGet(localStorage, `${SHARED_STORAGE_PREFIX}${listId}`) : "";
-
-    for (const raw of [rawEventData, rawSharedData]) {
-      if (!raw) continue;
-      try {
-        return normalizePersistedData(JSON.parse(raw));
-      } catch {
-        // Nächsten Snapshot probieren.
-      }
-    }
-
-    return normalizePersistedData(null);
-  }
-
-  function saveEventDataSnapshot(event, data, listId = event?.listId || "") {
-    const eventId = sanitizeEventId(event?.id);
-    const safeListId = sanitizeShareToken(listId, 128);
-    const payload = JSON.stringify(normalizePersistedData(data));
-
-    if (eventId) {
-      safeStorageSet(localStorage, `${EVENT_DATA_PREFIX}${eventId}`, payload);
-    }
-    if (safeListId) {
-      safeStorageSet(localStorage, `${SHARED_STORAGE_PREFIX}${safeListId}`, payload);
     }
   }
 
@@ -3811,36 +3087,6 @@
     return false;
   }
 
-  function canManageSharedBundleEvents() {
-    return Boolean(
-      state.remote.openedFromShareLink
-      && state.remote.shareScope === SHARE_SCOPE_ALL
-      && state.remote.canManageEvents
-      && state.remote.bundleId
-      && state.remote.bundleToken
-    );
-  }
-
-  function canManageCurrentEvents() {
-    if (!state.remote.listId) return true;
-    if (canManageSharedBundleEvents()) return true;
-    return state.remote.role === SHARE_ROLE_OWNER && !state.remote.openedFromShareLink;
-  }
-
-  function guardEventManagementAccess() {
-    if (canManageCurrentEvents()) return true;
-    showToast("Event-Verwaltung ist mit diesem Share-Link nicht erlaubt.", "warning");
-    return false;
-  }
-
-  function canCreateAllEventsShare() {
-    return Boolean(state.remote.configured && state.remote.db && canManageCurrentEvents() && !state.remote.openedFromShareLink);
-  }
-
-  function canPersistEventRegistry() {
-    return !state.remote.openedFromShareLink || state.remote.role === SHARE_ROLE_OWNER;
-  }
-
   function updateAccessUi() {
     const shared = Boolean(state.remote.listId);
     const readOnly = shared && !state.remote.canWrite;
@@ -3849,9 +3095,6 @@
     document.body.classList.toggle("shared-mode", shared);
     document.body.classList.toggle("read-only-mode", readOnly);
     document.body.classList.toggle("share-link-mode", shareLinkMode);
-    document.body.classList.toggle("local-share-disabled", !canUseShareFeature());
-
-    updateShareButtonAvailability();
 
     const formControls = els.form?.querySelectorAll("input, select, button") || [];
     formControls.forEach((control) => {
@@ -3868,34 +3111,10 @@
       els.bulkDeleteBtn.disabled = readOnly || state.selectedTicketIds.size === 0;
       els.bulkDeleteBtn.hidden = readOnly;
     }
-    const canManageEvents = canManageCurrentEvents();
-    [els.newEventBtn, els.renameEventBtn, els.deleteEventBtn].forEach((button) => {
-      if (!button) return;
-      button.disabled = !canManageEvents;
-      button.hidden = !canManageEvents;
-    });
-
     if (els.shareRotateBtn) {
       const canManage = canManageShareLinks();
       els.shareRotateBtn.disabled = !canManage;
       els.shareRotateBtn.hidden = !canManage;
-    }
-
-    if (els.shareAllEventsToggle) {
-      const canShareAll = canCreateAllEventsShare();
-      els.shareAllEventsToggle.disabled = !canShareAll;
-      if (!canShareAll) {
-        els.shareAllEventsToggle.checked = false;
-      }
-    }
-
-    if (els.shareManageEventsToggle) {
-      const canShareAll = canCreateAllEventsShare();
-      const canEnableManage = canShareAll && Boolean(els.shareAllEventsToggle?.checked) && Boolean(els.shareModeEdit?.checked);
-      els.shareManageEventsToggle.disabled = !canEnableManage;
-      if (!canEnableManage) {
-        els.shareManageEventsToggle.checked = false;
-      }
     }
 
     if (els.shareStatus) {
@@ -3905,28 +3124,11 @@
     }
   }
 
-  function updateShareButtonAvailability() {
-    if (!els.shareBtn) return;
-
-    const disabledLocally = !canUseShareFeature();
-    els.shareBtn.disabled = disabledLocally;
-    els.shareBtn.setAttribute("aria-disabled", disabledLocally ? "true" : "false");
-
-    if (disabledLocally) {
-      els.shareBtn.dataset.tooltip = "Teilen lokal deaktiviert";
-      els.shareBtn.title = "Share-Links können nur über die veröffentlichte GitHub-Pages-Seite erstellt werden.";
-    } else {
-      els.shareBtn.dataset.tooltip = "Ticketliste teilen";
-      els.shareBtn.removeAttribute("title");
-    }
-  }
-
   function getShareStatusText() {
     if (!state.remote.openedFromShareLink || !state.remote.listId) return "";
     if (state.remote.role === SHARE_ROLE_OWNER) {
       return "Geteilte Liste: Besitzerzugriff";
     }
-    if (state.remote.canManageEvents) return "Geteilte Liste: Event-Verwaltung erlaubt";
     if (state.remote.canWrite) return "Geteilte Liste: Bearbeiten erlaubt";
     return "Geteilte Liste: Nur ansehen";
   }
@@ -3936,11 +3138,6 @@
   }
 
   function openShareDialog({ allowEmpty = false, note = "" } = {}) {
-    if (!canUseShareFeature()) {
-      showToast("Teilen ist im lokalen Modus deaktiviert.", "warning");
-      return;
-    }
-
     if (!els.shareDialogBackdrop) {
       showToast("Teilen-Dialog konnte nicht geöffnet werden. Bitte lade die Seite neu.", "danger");
       return;
@@ -3967,15 +3164,6 @@
     if (els.shareModeEdit) {
       els.shareModeEdit.checked = !hasReadToken && hasEditToken;
       els.shareModeEdit.disabled = !hasAnyToken || !hasEditToken;
-    }
-    if (els.shareAllEventsToggle) {
-      const canShareAll = canCreateAllEventsShare();
-      els.shareAllEventsToggle.disabled = !canShareAll;
-      els.shareAllEventsToggle.checked = false;
-    }
-    if (els.shareManageEventsToggle) {
-      els.shareManageEventsToggle.disabled = true;
-      els.shareManageEventsToggle.checked = false;
     }
     if (els.shareLinkInput) {
       els.shareLinkInput.disabled = !hasAnyToken;
@@ -4018,92 +3206,23 @@
     }, 200);
   }
 
-  function handleShareDialogOptionChange(event) {
-    if (event?.target === els.shareManageEventsToggle && els.shareManageEventsToggle?.checked) {
-      if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = true;
-      if (els.shareModeEdit) els.shareModeEdit.checked = true;
-      if (els.shareModeRead) els.shareModeRead.checked = false;
-    }
-
-    if (event?.target === els.shareModeRead && els.shareModeRead?.checked && els.shareManageEventsToggle) {
-      els.shareManageEventsToggle.checked = false;
-    }
-
-    const wantsAllEvents = Boolean(els.shareAllEventsToggle?.checked);
-    const wantsManageEvents = Boolean(els.shareManageEventsToggle?.checked);
-    const forceRefreshBundle = event?.target === els.shareAllEventsToggle && wantsAllEvents && !state.remote.bundleId;
-
-    if (els.shareManageEventsToggle) {
-      const canEnableManage = wantsAllEvents && Boolean(els.shareModeEdit?.checked) && canCreateAllEventsShare();
-      els.shareManageEventsToggle.disabled = !canEnableManage;
-      if (!canEnableManage) {
-        els.shareManageEventsToggle.checked = false;
-      }
-    }
-
-    if (!wantsAllEvents) {
-      updateShareDialogLink();
-      return;
-    }
-
-    if (!canCreateAllEventsShare()) {
-      if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = false;
-      if (els.shareManageEventsToggle) els.shareManageEventsToggle.checked = false;
-      showToast("Alle-Events-Links können nur lokal oder als Besitzer erstellt werden.", "warning");
-      updateShareDialogLink();
-      return;
-    }
-
-    if (!state.remote.bundleId || !state.remote.bundleReadToken || !state.remote.bundleEditToken || !state.remote.bundleManageToken || forceRefreshBundle) {
-      setShareDialogEmptyState("Alle vorhandenen Events werden für den Share-Link vorbereitet ...");
-      void ensureAllEventsShareBundleForDialog({ force: forceRefreshBundle }).then((success) => {
-        if (!success) {
-          if (els.shareAllEventsToggle) els.shareAllEventsToggle.checked = false;
-          if (els.shareManageEventsToggle) els.shareManageEventsToggle.checked = false;
-        }
-        updateShareDialogLink();
-      });
-      return;
-    }
-
-    updateShareDialogLink();
-  }
-
   function updateShareDialogLink() {
     if (!els.shareLinkInput) return;
-
-    const useAllEvents = Boolean(els.shareAllEventsToggle?.checked && canCreateAllEventsShare());
-    const hasSingleToken = Boolean(state.remote.readToken || state.remote.editToken);
-    const hasBundleToken = Boolean(state.remote.bundleId && state.remote.bundleReadToken && state.remote.bundleEditToken && state.remote.bundleManageToken);
-
-    if (useAllEvents && !hasBundleToken) {
-      setShareDialogEmptyState("Alle vorhandenen Events werden für den Share-Link vorbereitet ...");
-      return;
-    }
-
-    if (!useAllEvents && !hasSingleToken) {
+    if (!state.remote.readToken && !state.remote.editToken) {
       setShareDialogEmptyState(canManageShareLinks()
         ? "Die bestehenden Share-Links konnten nicht geladen werden. Über Links erneuern erstellst du neue Links; alte Links werden dabei ungültig."
         : "Für diesen Zugriff ist kein teilbarer Link verfügbar.");
       return;
     }
 
-    const manageEvents = Boolean(useAllEvents && els.shareManageEventsToggle?.checked && els.shareModeEdit?.checked);
-    let mode = manageEvents ? "manage" : (els.shareModeEdit?.checked ? "edit" : "read");
-    if (mode === "read" && !useAllEvents && !state.remote.readToken && state.remote.editToken) {
+    let mode = els.shareModeEdit?.checked ? "edit" : "read";
+    if (mode === "read" && !state.remote.readToken && state.remote.editToken) {
       mode = "edit";
       if (els.shareModeEdit) els.shareModeEdit.checked = true;
       if (els.shareModeRead) els.shareModeRead.checked = false;
     }
-
-    const token = useAllEvents
-      ? (mode === "manage" ? state.remote.bundleManageToken : (mode === "edit" ? state.remote.bundleEditToken : state.remote.bundleReadToken))
-      : (mode === "edit" ? state.remote.editToken : (state.remote.readToken || state.remote.token));
-    const link = createShareLink(state.remote.listId, token, mode, {
-      scope: useAllEvents ? SHARE_SCOPE_ALL : SHARE_SCOPE_EVENT,
-      bundleId: state.remote.bundleId,
-    });
-
+    const token = mode === "edit" ? state.remote.editToken : (state.remote.readToken || state.remote.token);
+    const link = createShareLink(state.remote.listId, token, mode);
     els.shareLinkInput.value = link;
     els.shareLinkInput.disabled = false;
     if (els.shareCopyBtn) {
@@ -4111,15 +3230,9 @@
     }
 
     if (els.shareDialogNote) {
-      const scopeText = useAllEvents
-        ? "Dieser Link enthält alle aktuell vorhandenen Events aus dem Dropdown."
-        : "Dieser Link enthält nur das aktuell aktive Event.";
-      const permissionText = mode === "manage"
-        ? "Dieser Link erlaubt Ticketänderungen und Event-Verwaltung innerhalb der freigegebenen Events."
-        : (mode === "edit"
-          ? "Editierbare Links erlauben Ticketänderungen innerhalb der freigegebenen Events, aber keine Event-Verwaltung."
-          : "Read-only-Links erlauben Ansehen und CSV-Export, aber keine Änderungen.");
-      els.shareDialogNote.textContent = `${scopeText} ${permissionText}`;
+      els.shareDialogNote.textContent = mode === "edit"
+        ? "Editierbare Links erlauben Hinzufügen, Bearbeiten, Löschen und CSV-Import."
+        : "Read-only-Links erlauben Ansehen und CSV-Export, aber keine Änderungen.";
     }
   }
 
@@ -4176,7 +3289,6 @@
 
     const uid = state.remote.user?.uid;
     const listId = state.remote.listId;
-    const previousBundleId = state.remote.bundleId;
     if (!uid || !listId) return;
 
     const now = Date.now();
@@ -4191,23 +3303,10 @@
 
     try {
       await dbUpdate(dbRef(state.remote.db), updates);
-      if (previousBundleId) {
-        try {
-          await dbSet(dbRef(state.remote.db, `shareBundles/${previousBundleId}`), null);
-        } catch (bundleError) {
-          console.warn("Bestehender Alle-Events-Link konnte nicht entfernt werden:", bundleError);
-        }
-      }
       state.remote.readToken = readToken;
       state.remote.editToken = editToken;
       state.remote.token = editToken;
       state.remote.shareKey = "";
-      state.remote.bundleId = "";
-      state.remote.bundleToken = "";
-      state.remote.bundleReadToken = "";
-      state.remote.bundleEditToken = "";
-      state.remote.bundleManageToken = "";
-      state.remote.sharedEventAccess = {};
       state.remote.role = SHARE_ROLE_OWNER;
       state.remote.canWrite = true;
       saveOwnerRemoteSession({ listId, authUid: uid });
@@ -4242,33 +3341,25 @@
     showToast("Share-Link wurde kopiert.", "success");
   }
 
-  function createShareLink(listId, token, mode, { scope = SHARE_SCOPE_EVENT, bundleId = "" } = {}) {
-    if (!canUseShareFeature()) return "";
+  function createShareLink(listId, token, mode) {
     const url = new URL(state.remote.baseUrl || getCurrentBaseUrl());
-    removeShareParamsFromUrl(url);
-    url.hash = createShareHash(listId, token, mode, getCurrentShareEventName(listId), { scope, bundleId });
+    url.searchParams.delete(SHARE_PARAM_LIST);
+    url.searchParams.delete(SHARE_PARAM_TOKEN);
+    url.searchParams.delete(SHARE_PARAM_ROLE);
+    url.searchParams.delete(SHARE_PARAM_EVENT);
+    url.hash = createShareHash(listId, token, mode, getCurrentShareEventName(listId));
     return url.href;
   }
 
-  function createShareHash(listId, token, mode, eventName = "", { scope = SHARE_SCOPE_EVENT, bundleId = "" } = {}) {
+  function createShareHash(listId, token, mode, eventName = "") {
     const params = new URLSearchParams();
+    params.set(SHARE_PARAM_LIST, listId);
     params.set(SHARE_PARAM_TOKEN, token);
-    params.set(SHARE_PARAM_ROLE, mode === "manage" ? "manage" : (mode === "edit" ? "edit" : "read"));
-
-    if (scope === SHARE_SCOPE_ALL) {
-      const safeBundleId = sanitizeShareBundleId(bundleId);
-      params.set(SHARE_PARAM_SCOPE, SHARE_SCOPE_ALL);
-      if (safeBundleId) {
-        params.set(SHARE_PARAM_BUNDLE, safeBundleId);
-      }
-    } else {
-      params.set(SHARE_PARAM_LIST, listId);
-      const safeEventName = normalizeEventName(eventName);
-      if (safeEventName) {
-        params.set(SHARE_PARAM_EVENT, safeEventName);
-      }
+    params.set(SHARE_PARAM_ROLE, mode === "edit" ? "edit" : "read");
+    const safeEventName = normalizeEventName(eventName);
+    if (safeEventName) {
+      params.set(SHARE_PARAM_EVENT, safeEventName);
     }
-
     return params.toString();
   }
 
@@ -4284,52 +3375,19 @@
   function replaceLegacyShareQueryWithHash(listId, token, mode, eventName = "") {
     try {
       const url = new URL(window.location.href);
-      if (!hasShareSearchParams(url)) {
+      if (!url.searchParams.has(SHARE_PARAM_LIST) && !url.searchParams.has(SHARE_PARAM_TOKEN) && !url.searchParams.has(SHARE_PARAM_ROLE) && !url.searchParams.has(SHARE_PARAM_EVENT)) {
         return;
       }
 
-      removeShareParamsFromUrl(url);
+      url.searchParams.delete(SHARE_PARAM_LIST);
+      url.searchParams.delete(SHARE_PARAM_TOKEN);
+      url.searchParams.delete(SHARE_PARAM_ROLE);
+      url.searchParams.delete(SHARE_PARAM_EVENT);
       url.hash = createShareHash(listId, token, mode, eventName);
       window.history.replaceState(null, document.title, url.href);
     } catch {
       // Alte Query-Links funktionieren weiter, die Bereinigung ist nur Härtung.
     }
-  }
-
-  function replaceBundleShareQueryWithHash(bundleId, token, mode) {
-    try {
-      const url = new URL(window.location.href);
-      if (!hasShareSearchParams(url)) {
-        return;
-      }
-
-      removeShareParamsFromUrl(url);
-      url.hash = createShareHash("", token, mode, "", {
-        scope: SHARE_SCOPE_ALL,
-        bundleId,
-      });
-      window.history.replaceState(null, document.title, url.href);
-    } catch {
-      // Query-Bereinigung ist optional.
-    }
-  }
-
-  function hasShareSearchParams(url) {
-    return url.searchParams.has(SHARE_PARAM_LIST)
-      || url.searchParams.has(SHARE_PARAM_TOKEN)
-      || url.searchParams.has(SHARE_PARAM_ROLE)
-      || url.searchParams.has(SHARE_PARAM_EVENT)
-      || url.searchParams.has(SHARE_PARAM_SCOPE)
-      || url.searchParams.has(SHARE_PARAM_BUNDLE);
-  }
-
-  function removeShareParamsFromUrl(url) {
-    url.searchParams.delete(SHARE_PARAM_LIST);
-    url.searchParams.delete(SHARE_PARAM_TOKEN);
-    url.searchParams.delete(SHARE_PARAM_ROLE);
-    url.searchParams.delete(SHARE_PARAM_EVENT);
-    url.searchParams.delete(SHARE_PARAM_SCOPE);
-    url.searchParams.delete(SHARE_PARAM_BUNDLE);
   }
 
   async function copyTextToClipboard(text) {
@@ -4368,43 +3426,6 @@
     }
   }
 
-  function resolveAppBaseUrl() {
-    const currentBaseUrl = getCurrentBaseUrl();
-    if (isLocalDevelopmentUrl()) return currentBaseUrl;
-    return normalizeBaseUrl(appConfig?.baseUrl) || currentBaseUrl;
-  }
-
-  function isLocalDevelopmentUrl() {
-    const protocol = window.location.protocol;
-    if (protocol === "file:") return true;
-    if (protocol !== "http:") return false;
-
-    const host = normalizeHostName(window.location.hostname);
-    return host === "localhost"
-      || host.endsWith(".localhost")
-      || host === "127.0.0.1"
-      || host === "::1"
-      || isPrivateIpv4Host(host);
-  }
-
-  function normalizeHostName(hostname) {
-    return String(hostname || "").trim().replace(/^\[|\]$/g, "").toLowerCase();
-  }
-
-  function isPrivateIpv4Host(hostname) {
-    const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
-    if (!match) return false;
-
-    const parts = match.slice(1).map(Number);
-    if (parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-
-    const [first, second] = parts;
-    return first === 10
-      || (first === 172 && second >= 16 && second <= 31)
-      || (first === 192 && second === 168)
-      || (first === 169 && second === 254);
-  }
-
   function getCurrentBaseUrl() {
     const url = new URL(window.location.href);
     url.search = "";
@@ -4429,11 +3450,6 @@
     const text = String(value || "").trim();
     if (!text || text.length > maxLength) return "";
     return /^[A-Za-z0-9_-]+$/.test(text) ? text : "";
-  }
-
-  function sanitizeShareBundleId(value) {
-    const text = sanitizeShareToken(value, 128);
-    return /^bun_[A-Za-z0-9_-]{18}$/.test(text) ? text : "";
   }
 
   function sanitizeAuthUid(value) {
@@ -4497,7 +3513,7 @@
       : true;
     const legacyCurrentSaved = safeStorageSet(localStorage, STORAGE_KEY, payload);
 
-    if (activeEvent && canPersistEventRegistry()) {
+    if (activeEvent) {
       activeEvent.updatedAt = Date.now();
       saveEventRegistry();
     }
@@ -4515,7 +3531,7 @@
       ? safeStorageSet(localStorage, `${EVENT_DATA_PREFIX}${activeEvent.id}`, payload)
       : true;
 
-    if (activeEvent?.listId === safeListId && canPersistEventRegistry()) {
+    if (activeEvent?.listId === safeListId) {
       activeEvent.updatedAt = Date.now();
       saveEventRegistry();
     }
@@ -4634,7 +3650,6 @@
       if (activeEvent.listId) {
         const sharedData = safeStorageGet(localStorage, `${SHARED_STORAGE_PREFIX}${activeEvent.listId}`);
         if (sharedData) return sharedData;
-        if (state.remote.openedFromShareLink) return null;
       }
 
       if (hasAnyEventDataSnapshot()) return null;

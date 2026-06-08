@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file: https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' file:; img-src 'self' file: data:; font-src 'self' file:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' file: https://www.gstatic.com https://*.firebaseio.com https://*.firebasedatabase.app; style-src 'self' file:; img-src 'self' file: data:; font-src 'self' file:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; upgrade-insecure-requests">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="dark">
-  <meta name="app-version" content="2026.06.07.12">
+  <meta name="app-version" content="2026.06.08.01">
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Ticketverwaltung</title>
-  <link rel="icon" href="assets/img/icon.svg?v=2026.06.07.12" type="image/svg+xml">
-  <link rel="stylesheet" href="assets/css/style.css?v=2026.06.07.12">
-  <script defer src="assets/js/app.js?v=2026.06.07.12"></script>
+  <link rel="icon" href="assets/img/icon.svg?v=2026.06.08.01" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/style.css?v=2026.06.08.01">
+  <script defer src="assets/js/app.js?v=2026.06.08.01"></script>
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true" focusable="false">
@@ -288,7 +288,7 @@
   <div class="modal-backdrop share-modal-backdrop" id="shareDialogBackdrop" hidden>
     <section class="modal-card share-modal-card" role="dialog" aria-modal="true" aria-labelledby="shareDialogTitle" aria-describedby="shareDialogText" tabindex="-1">
       <h2 id="shareDialogTitle">Ticketliste teilen</h2>
-      <p id="shareDialogText">Erzeuge einen Share-Link für das aktive Event oder optional für alle vorhandenen Events. Read-only darf nur ansehen, editierbar darf Tickets innerhalb der freigegebenen Events bearbeiten.</p>
+      <p id="shareDialogText">Erzeuge einen Link für dieselbe Ticketliste. Read-only darf nur ansehen, editierbar darf Tickets hinzufügen, bearbeiten und löschen.</p>
 
       <div class="share-options" role="radiogroup" aria-label="Freigabe-Rechte">
         <label class="share-option">
@@ -306,22 +306,6 @@
           </span>
         </label>
       </div>
-
-      <label class="share-scope-option" id="shareAllEventsOption">
-        <input id="shareAllEventsToggle" type="checkbox">
-        <span class="share-scope-text">
-          <strong>Alle vorhandenen Events im Share-Link verfügbar machen</strong>
-          <small>Empfänger sehen dann alle Events aus dem Event-Dropdown. Ohne Haken wird nur das aktuell aktive Event geteilt.</small>
-        </span>
-      </label>
-
-      <label class="share-scope-option" id="shareManageEventsOption">
-        <input id="shareManageEventsToggle" type="checkbox">
-        <span class="share-scope-text">
-          <strong>Event-Verwaltung erlauben</strong>
-          <small>Nur für editierbare Alle-Events-Links. Empfänger dürfen Events erstellen, umbenennen und aus dem Share-Link entfernen.</small>
-        </span>
-      </label>
 
       <label class="field share-link-field">
         <span>Share-Link</span>
